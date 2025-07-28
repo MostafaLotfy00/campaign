@@ -35,6 +35,27 @@ public class Contact {
     @Column(name = "conversation_id")
     private String conversationId;
 
+    @Column(name = "conversation_start_time") // <<<<< حقل جديد لـ conversationStart
+    private LocalDateTime conversationStartTime;
+
+    @Column(name = "conversation_end_time")
+    private LocalDateTime conversationEndTime;
+
+
+    @Column(name = "call_duration_seconds")
+    private Long callDurationSeconds;
+
+    @Column(name = "selected_agent_id")
+    private String selectedAgentId;
+    // <<<<<<<<<<<<<<< حقل جديد: اسم الـ Agent >>>>>>>>>>>>>>>
+    @Column(name = "agent_name")
+    private String agentName;
+    // <<<<<<<<<<<<<<< نهاية الحقل الجديد >>>>>>>>>>>>>>>
+
+    @Column(name = "wrap_up_code")
+    private String wrapUpCode;
+
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -62,6 +83,22 @@ public class Contact {
         this.lastAttempt = lastAttempt;
         this.lastResult = lastResult;
         this.conversationId = conversationId; // <<<<< إضافة الـ conversationId هنا
+        this.createdAt = LocalDateTime.now();
+    }
+
+    public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId,
+                   LocalDateTime conversationStartTime, LocalDateTime conversationEndTime,
+                   String selectedAgentId, String agentName, String wrapUpCode, Long callDurationSeconds) { // تم إضافة agentName
+        this.phone = phone;
+        this.lastAttempt = lastAttempt;
+        this.lastResult = lastResult;
+        this.conversationId = conversationId;
+        this.conversationStartTime = conversationStartTime;
+        this.conversationEndTime = conversationEndTime;
+        this.selectedAgentId = selectedAgentId;
+        this.agentName = agentName; // تخزين agentName
+        this.wrapUpCode = wrapUpCode;
+        this.callDurationSeconds = callDurationSeconds;
         this.createdAt = LocalDateTime.now();
     }
 }

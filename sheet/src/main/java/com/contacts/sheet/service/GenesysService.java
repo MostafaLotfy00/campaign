@@ -12,8 +12,15 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import com.contacts.sheet.model.ConversationDetailsResponse; // <<<<< إضافة Import جديد
+import com.contacts.sheet.model.Participant; // <<<<< إضافة Import جديد
+import com.contacts.sheet.model.Session;     // <<<<< إضافة Import جديد
+import com.contacts.sheet.model.Segment;     // <<<<< إضافة Import جديد
+import com.contacts.sheet.model.ScimUserResponse; // <<<<<< أضف هذا
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -84,6 +91,46 @@ public class GenesysService {
         } catch (Exception e) {
             System.err.println("Unexpected error getting access token: " + e.getMessage());
             throw new RuntimeException("Failed to get access token.", e);
+        }
+    }
+
+    public ConversationDetailsResponse fetchConversationDetails(String conversationId) {
+        String accessToken = getAccessToken(); // ممكن تمرر الـ token لو مش عاوز تجيب واحد جديد كل مرة
+        if (accessToken == null) {
+            System.err.println("فشل الحصول على Access Token لـ Conversation Details API.");
+            return null;
+        }
+
+        String detailsUrl = String.format("https://api.%s/api/v2/analytics/conversations/%s/details", region, conversationId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+        try {
+            System.out.println("جاري جلب تفاصيل المكالمة لـ Conversation ID: " + conversationId);
+            ResponseEntity<ConversationDetailsResponse> response = restTemplate.exchange(
+                    detailsUrl,
+                    HttpMethod.GET,
+                    requestEntity,
+                    ConversationDetailsResponse.class // هنا بنستخدم الـ POJO اللي عملناه
+            );
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                System.out.println("تم جلب تفاصيل المكالمة بنجاح لـ ID: " + conversationId);
+                return response.getBody();
+            } else {
+                System.err.println("فشل جلب تفاصيل المكالمة لـ ID: " + conversationId + ". Status: " + response.getStatusCode());
+                return null;
+            }
+        } catch (HttpClientErrorException e) {
+            System.err.println("خطأ في جلب تفاصيل المكالمة لـ ID: " + conversationId + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
+            return null;
+        } catch (Exception e) {
+            System.err.println("خطأ غير متوقع أثناء جلب تفاصيل المكالمة لـ ID: " + conversationId + ": " + e.getMessage());
+            e.printStackTrace();
+            return null;
         }
     }
 
@@ -305,6 +352,143 @@ public class GenesysService {
             System.err.println("حدث خطأ أثناء معالجة وحفظ CSV: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    // <<<<<<<<<<<<<<< ميثود جديدة: جلب اسم الـ Agent من SCIM API >>>>>>>>>>>>>>>
+    public String fetchAgentDisplayName(String userId) {
+        if (userId == null || userId.isEmpty()) {
+            return null; // لو مفيش userId، مش هنعمل call للـ API
+        }
+
+        String accessToken = getAccessToken(); // ممكن تعيد استخدام الـ token لو لسه صالح
+        if (accessToken == null) {
+            System.err.println("فشل الحصول على Access Token لـ SCIM Users API.");
+            return null;
+        }
+
+        String scimUserUrl = String.format("https://api.%s/api/v2/scim/users/%s", region, userId); // URL الجديد
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+        try {
+            System.out.println("جاري جلب بيانات الـ Agent لـ User ID: " + userId);
+            ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
+                    scimUserUrl,
+                    HttpMethod.GET,
+                    requestEntity,
+                    ScimUserResponse.class // هنا بنستخدم الـ Model الجديد
+            );
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                System.out.println("تم جلب بيانات الـ Agent بنجاح لـ User ID: " + userId);
+                return response.getBody().getDisplayName(); // ده اللي يهمنا
+            } else {
+                System.err.println("فشل جلب بيانات الـ Agent لـ User ID: " + userId + ". Status: " + response.getStatusCode());
+                return null;
+            }
+        } catch (HttpClientErrorException e) {
+            System.err.println("خطأ في جلب بيانات الـ Agent لـ User ID: " + userId + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
+            return null;
+        } catch (Exception e) {
+            System.err.println("خطأ غير متوقع أثناء جلب بيانات الـ Agent لـ User ID: " + userId + ": " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+    // <<<<<<<<<<<<<<< نهاية الميثود الجديدة >>>>>>>>>>>>>>>
+
+
+    public void updateContactsWithConversationDetails() {
+        System.out.println("--- بدء تحديث الـ Contacts بتفاصيل المكالمات من Genesys API ---");
+        // جلب الـ Contacts اللي ليها conversationId بس لسه مفيش ليها conversationStartTime
+        List<Contact> contactsToUpdate = contactRepository.findByConversationIdIsNotNullAndConversationStartTimeIsNull();
+
+        System.out.println("تم العثور على " + contactsToUpdate.size() + " سجل لـ Contacts تحتاج لتفاصيل مكالمات.");
+        int updatedCount = 0;
+
+        for (Contact contact : contactsToUpdate) {
+            if (contact.getConversationId() == null || contact.getConversationId().isEmpty()) {
+                System.out.println("تخطي Contact بدون Conversation ID: " + contact.getPhone());
+                continue;
+            }
+
+            ConversationDetailsResponse details = fetchConversationDetails(contact.getConversationId());
+
+            if (details != null) {
+                // تحديث حقول الوقت الجديدة من الـ Conversation Details API
+                contact.setConversationStartTime(details.getConversationStart());
+                contact.setConversationEndTime(details.getConversationEnd());
+
+                // حساب مدة المكالمة بالثواني بناءً على الحقلين الجديدين
+                if (contact.getConversationStartTime() != null && contact.getConversationEndTime() != null) {
+                    Duration duration = Duration.between(contact.getConversationStartTime(), contact.getConversationEndTime());
+                    contact.setCallDurationSeconds(duration.getSeconds());
+                } else {
+                    contact.setCallDurationSeconds(null);
+                }
+
+                String selectedAgentId = null;
+                String wrapUpCode = null;
+
+                // البحث عن الـ selectedAgentId والـ wrapUpCode في الـ participants
+                for (Participant participant : details.getParticipants()) {
+                    if (participant.getSessions() != null) {
+                        for (Session session : participant.getSessions()) {
+                            if (selectedAgentId == null && session.getSelectedAgentId() != null) {
+                                selectedAgentId = session.getSelectedAgentId();
+                            }
+                            if (wrapUpCode == null && session.getSegments() != null) {
+                                for (Segment segment : session.getSegments()) {
+                                    if (segment.getWrapUpCode() != null) {
+                                        wrapUpCode = segment.getWrapUpCode();
+                                        break;
+                                    }
+                                }
+                            }
+                            if (selectedAgentId != null && wrapUpCode != null) {
+                                break;
+                            }
+                        }
+                    }
+                    if (selectedAgentId != null && wrapUpCode != null) {
+                        break;
+                    }
+                }
+
+                // تخزين الـ selectedAgentId والـ wrapUpCode
+                contact.setSelectedAgentId(selectedAgentId);
+                contact.setWrapUpCode(wrapUpCode);
+
+                // <<<<<<<<<<<<<<< إضافة استدعاء لجلب اسم الـ Agent هنا >>>>>>>>>>>>>>>
+                if (selectedAgentId != null && !selectedAgentId.isEmpty()) {
+                    String agentName = fetchAgentDisplayName(selectedAgentId); // استدعاء الميثود الجديدة
+                    contact.setAgentName(agentName);
+                } else {
+                    contact.setAgentName(null); // لو مفيش Agent ID، يبقى الاسم null
+                }
+                // <<<<<<<<<<<<<<< نهاية الإضافة >>>>>>>>>>>>>>>
+
+                contactRepository.save(contact);
+                updatedCount++;
+                System.out.println("تم تحديث تفاصيل المكالمة لـ Contact: " + contact.getPhone() +
+                        " (Conversation ID: " + contact.getConversationId() + ")" +
+                        " Conversation Start: " + contact.getConversationStartTime() +
+                        ", Conversation End: " + contact.getConversationEndTime() +
+                        ", Duration: " + contact.getCallDurationSeconds() + " ثانية" +
+                        ", Agent ID: " + selectedAgentId +
+                        ", Agent Name: " + contact.getAgentName() + // <<<< log لاسم الـ Agent الجديد
+                        ", WrapUpCode: " + wrapUpCode);
+            } else {
+                System.err.println("لم يتم جلب تفاصيل المكالمة لـ Contact: " + contact.getPhone() + " (ID: " + contact.getConversationId() + ")");
+            }
+
+            // ممكن تضيف هنا Thread.sleep() لو محتاج تتحكم في معدل طلبات الـ API
+            // Thread.sleep(500); // 500 ملي ثانية بين كل طلب وآخر
+        }
+        System.out.println("--- انتهاء تحديث الـ Contacts بتفاصيل المكالمات. تم تحديث " + updatedCount + " سجل. ---");
     }
 
     private String extractDirectCsvLink(String htmlContent) {

@@ -17,7 +17,8 @@ public interface ContactRepo extends JpaRepository<Contact, Integer> {
     Optional<Contact> findByPhoneAndLastAttempt(String phone, LocalDateTime lastAttempt);
 
     List<Contact> findByCreatedAtBetween(LocalDateTime startOfDay, LocalDateTime endOfDay);
-    // لو عايز تحددها بـ Query يدوياً لو الـ JPA مش شغالة صح:
+
+    List<Contact> findByConversationIdIsNotNullAndConversationStartTimeIsNull();
 //     @Query("SELECT c FROM Contact c WHERE FUNCTION('CONVERT', DATE, c.createdAt) = :date")
 //     List<Contact> findByCreatedAtDate(@Param("date") LocalDate date);
 }
