@@ -514,4 +514,7 @@ public class GenesysService {
                 "عينة من المحتوى: " + htmlContent.substring(0, Math.min(htmlContent.length(), 500)));
         return null;
     }
+    public List<Contact> getContacts() {
+        return contactRepository.findAll(); // أو فلترة حسب شرط معين
+    }
 }
