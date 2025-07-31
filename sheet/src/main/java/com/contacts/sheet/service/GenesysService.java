@@ -2,6 +2,7 @@ package com.contacts.sheet.service;
 
 import com.contacts.sheet.Repository.ContactRepo;
 import com.contacts.sheet.entity.Contact;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +37,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors; // <<-- إضافة Import جديد مهم هنا
+
+import static com.contacts.sheet.configration.RetryUtils.retry;
+
 
 @Service
 public class GenesysService {
@@ -79,20 +83,31 @@ public class GenesysService {
         HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(body, headers);
 
         try {
-            String tokenResponse = restTemplate.postForObject(authUrl, requestEntity, String.class);
+            return retry(3, 2000, () -> {
+                try {
+                    String tokenResponse = restTemplate.postForObject(authUrl, requestEntity, String.class);
 
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode root = mapper.readTree(tokenResponse);
-            return root.path("access_token").asText();
+                    ObjectMapper mapper = new ObjectMapper();
+                    JsonNode root = mapper.readTree(tokenResponse);
+                    String token = root.path("access_token").asText();
 
-        } catch (HttpClientErrorException e) {
-            System.err.println("Error getting access token: " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-            throw new RuntimeException("Failed to get access token: " + e.getResponseBodyAsString(), e);
+                    if (token == null || token.isEmpty()) {
+                        throw new RuntimeException("Access token not found in response");
+                    }
+
+                    return token;
+                } catch (HttpClientErrorException e) {
+                    System.err.println("Error getting access token: " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
+                    throw new RuntimeException("Failed to get access token: " + e.getResponseBodyAsString(), e);
+                }
+            });
         } catch (Exception e) {
-            System.err.println("Unexpected error getting access token: " + e.getMessage());
-            throw new RuntimeException("Failed to get access token.", e);
+            System.err.println("🚫 Failed to retrieve access token after retries: " + e.getMessage());
+            throw new RuntimeException("Access token retrieval failed after retries.", e);
         }
     }
+
+
 
     public ConversationDetailsResponse fetchConversationDetails(String conversationId) {
         String accessToken = getAccessToken(); // ممكن تمرر الـ token لو مش عاوز تجيب واحد جديد كل مرة
@@ -109,30 +124,29 @@ public class GenesysService {
         HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
 
         try {
-            System.out.println("جاري جلب تفاصيل المكالمة لـ Conversation ID: " + conversationId);
-            ResponseEntity<ConversationDetailsResponse> response = restTemplate.exchange(
-                    detailsUrl,
-                    HttpMethod.GET,
-                    requestEntity,
-                    ConversationDetailsResponse.class // هنا بنستخدم الـ POJO اللي عملناه
-            );
+            return retry(3, 2000, () -> {
+                System.out.println("🔍 جاري جلب تفاصيل المكالمة لـ Conversation ID: " + conversationId);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                System.out.println("تم جلب تفاصيل المكالمة بنجاح لـ ID: " + conversationId);
-                return response.getBody();
-            } else {
-                System.err.println("فشل جلب تفاصيل المكالمة لـ ID: " + conversationId + ". Status: " + response.getStatusCode());
-                return null;
-            }
-        } catch (HttpClientErrorException e) {
-            System.err.println("خطأ في جلب تفاصيل المكالمة لـ ID: " + conversationId + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-            return null;
+                ResponseEntity<ConversationDetailsResponse> response = restTemplate.exchange(
+                        detailsUrl,
+                        HttpMethod.GET,
+                        requestEntity,
+                        ConversationDetailsResponse.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    System.out.println("✅ تم جلب تفاصيل المكالمة بنجاح لـ ID: " + conversationId);
+                    return response.getBody();
+                } else {
+                    throw new RuntimeException("❌ فشل جلب تفاصيل المكالمة. Status: " + response.getStatusCode());
+                }
+            });
         } catch (Exception e) {
-            System.err.println("خطأ غير متوقع أثناء جلب تفاصيل المكالمة لـ ID: " + conversationId + ": " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("🚫 فشل نهائيًا في جلب تفاصيل المكالمة لـ ID: " + conversationId + ": " + e.getMessage());
             return null;
         }
     }
+
 
     // دالة لبدء عملية الـ Export لـ Contact List معينة
     private String initiateContactExport(String token) {
@@ -352,7 +366,7 @@ public class GenesysService {
             return null;
         }
 
-        String scimUserUrl = String.format("https://api.%s/api/v2/scim/users/%s", region, userId); // URL الجديد
+        String scimUserUrl = String.format("https://api.%s/api/v2/scim/users/%s", region, userId);
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
@@ -360,30 +374,29 @@ public class GenesysService {
         HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
 
         try {
-            System.out.println("جاري جلب بيانات الـ Agent لـ User ID: " + userId);
-            ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
-                    scimUserUrl,
-                    HttpMethod.GET,
-                    requestEntity,
-                    ScimUserResponse.class // هنا بنستخدم الـ Model الجديد
-            );
+            return retry(3, 2000, () -> {
+                System.out.println("🔍 جاري جلب بيانات الـ Agent لـ User ID: " + userId);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                System.out.println("تم جلب بيانات الـ Agent بنجاح لـ User ID: " + userId);
-                return response.getBody().getDisplayName(); // ده اللي يهمنا
-            } else {
-                System.err.println("فشل جلب بيانات الـ Agent لـ User ID: " + userId + ". Status: " + response.getStatusCode());
-                return null;
-            }
-        } catch (HttpClientErrorException e) {
-            System.err.println("خطأ في جلب بيانات الـ Agent لـ User ID: " + userId + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-            return null;
+                ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
+                        scimUserUrl,
+                        HttpMethod.GET,
+                        requestEntity,
+                        ScimUserResponse.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    System.out.println("✅ تم جلب بيانات الـ Agent بنجاح لـ User ID: " + userId);
+                    return response.getBody().getDisplayName();
+                } else {
+                    throw new RuntimeException("❌ فشل جلب بيانات الـ Agent. Status: " + response.getStatusCode());
+                }
+            });
         } catch (Exception e) {
-            System.err.println("خطأ غير متوقع أثناء جلب بيانات الـ Agent لـ User ID: " + userId + ": " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("🚫 فشل نهائيًا في جلب بيانات الـ Agent لـ User ID: " + userId + ": " + e.getMessage());
             return null;
         }
     }
+
     // <<<<<<<<<<<<<<< نهاية الميثود الجديدة >>>>>>>>>>>>>>>
 
 
@@ -480,10 +493,6 @@ public class GenesysService {
         }
         System.out.println("--- انتهاء تحديث الـ Contacts بتفاصيل المكالمات. تم تحديث " + updatedCount + " سجل. ---");
     }
-
-
-
-
 
 
     private String extractDirectCsvLink(String htmlContent) {

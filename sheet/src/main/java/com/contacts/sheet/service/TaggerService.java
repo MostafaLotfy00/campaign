@@ -16,6 +16,8 @@ import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static com.contacts.sheet.configration.RetryUtils.retry;
+
 @Service
 @RequiredArgsConstructor
 public class TaggerService {
@@ -26,6 +28,8 @@ public class TaggerService {
 private final ContactRepo contactRepo;
     private final String TAGGER_API_URL = "https://admin-internal.dev.taager.com/dialer/webhooks/genesys/call-attempts";
 
+
+
     public void sendContactsToTagger(List<Contact> contacts) {
         String accessToken = getAccessTokenFromKeycloak();
         if (accessToken == null) {
@@ -33,7 +37,7 @@ private final ContactRepo contactRepo;
             return;
         }
 
-        // ✅ Step 1: Filter contacts where status = "not sent"
+        // Step 1: Filter contacts with status "not sent"
         List<Contact> unsentContacts = contacts.stream()
                 .filter(contact -> "not sent".equalsIgnoreCase(contact.getStatus()))
                 .collect(Collectors.toList());
@@ -55,29 +59,34 @@ private final ContactRepo contactRepo;
         headers.setBearerAuth(accessToken);
 
         try {
-            // ✅ Log payload as pretty JSON
+            // Log payload
             String jsonPayload = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
             System.out.println("📦 JSON Payload:\n" + jsonPayload);
 
-            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
-
-            ResponseEntity<String> response = restTemplate.exchange(
-                    TAGGER_API_URL,
-                    HttpMethod.POST,
-                    requestEntity,
-                    String.class
-            );
+            // Retry sending request
+            ResponseEntity<String> response = retry(3, 2000, () -> {
+                HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
+                return restTemplate.exchange(
+                        TAGGER_API_URL,
+                        HttpMethod.POST,
+                        requestEntity,
+                        String.class
+                );
+            });
 
             System.out.println("✅ Response from Tagger: " + response.getBody());
+
             if (response.getStatusCode().is2xxSuccessful()) {
                 unsentContacts.forEach(contact -> contact.setStatus("sent"));
-                contactRepo.saveAll(unsentContacts); // 🔁 persist the updated status
+                contactRepo.saveAll(unsentContacts);
                 System.out.println("✅ Status updated to 'sent' for all sent contacts.");
             }
+
         } catch (Exception e) {
-            System.err.println("❌ Error sending contacts: " + e.getMessage());
+            System.err.println("🚫 Final failure after retries: " + e.getMessage());
         }
     }
+
 
     private Map<String, Object> convertContactToCallAttempt(Contact contact) {
         Map<String, Object> callAttempt = new HashMap<>();
@@ -132,17 +141,25 @@ private final ContactRepo contactRepo;
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
 
         try {
-            ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
-            if (response.getStatusCode().is2xxSuccessful()) {
-                JsonNode json = objectMapper.readTree(response.getBody());
-                return json.get("access_token").asText();
-            } else {
-                System.err.println("❌ Failed to retrieve token. Status: " + response.getStatusCode());
-                return null;
-            }
+            return retry(3, 2000, () -> {
+                ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
+                if (response.getStatusCode().is2xxSuccessful()) {
+                    JsonNode json = objectMapper.readTree(response.getBody());
+                    return json.get("access_token").asText();
+                } else {
+                    throw new RuntimeException("Failed to retrieve token. Status: " + response.getStatusCode());
+                }
+            });
         } catch (Exception e) {
-            System.err.println("❌ Exception during token request: " + e.getMessage());
+            System.err.println("🚫 Failed to get access token after retries: " + e.getMessage());
             return null;
         }
     }
+
+
+
+
+
+
+
 }
