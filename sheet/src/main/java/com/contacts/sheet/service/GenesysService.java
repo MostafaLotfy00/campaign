@@ -244,7 +244,6 @@ public class GenesysService {
         int recordsProcessed = 0;
         int recordsUpdated = 0;
         int recordsInserted = 0;
-
         try {
             CSVFormat csvFormat = CSVFormat.DEFAULT
                     .builder()
@@ -256,22 +255,16 @@ public class GenesysService {
                     .build();
 
             try (CSVParser csvParser = new CSVParser(new StringReader(csvContent), csvFormat)) {
-                // جلب كل الـ Contacts الموجودة في الداتابيز مرة واحدة
-                // واستخدام الـ phone كـ key لسهولة البحث عن طريق Stream API
-                Map<String, Contact> existingContactsMap = contactRepository.findAll().stream()
-                        .collect(Collectors.toMap(Contact::getPhone, contact -> contact,
-                                (existing, replacement) -> existing)); // في حالة وجود نفس الـ phone أكثر من مرة، احتفظ بالسجل الموجود (existing)
 
+                // ملاحظة: تم حذف الـ Map `existingContactsMap` لأنه لم يعد مناسبًا
+                // للبحث عن Unique Key مركب (phone, lastAttempt).
+                // سنقوم بالبحث في الداتابيز مباشرةً لكل سجل.
                 for (CSVRecord csvRecord : csvParser) {
                     recordsProcessed++;
-
-                    String phone = csvRecord.get("phone1"); // تأكد من اسم العمود في الـ CSV
-                    String lastAttemptStr = csvRecord.get("CallRecordLastAttempt-phone1"); // تأكد من اسم العمود
-                    String lastResult = csvRecord.get("CallRecordLastResult-phone1"); // تأكد من اسم العمود
-                    // <<<<<<<<<<<<<<< جديد: استخراج conversationId من الـ CSV >>>>>>>>>>>>>
-                    // تأكد إن اسم العمود ده موجود في ملف الـ CSV اللي Genesys بتطلعه
-                    // لو مش موجود، لازم تعرف إزاي تجيبه من الـ CSV أو لو مبيجيش من الـ CSV أصلاً
-                    String conversationId = csvRecord.get("conversationId"); // <<<<<<<<<<<<<<< تأكد من اسم العمود في الـ CSV
+                    String phone = csvRecord.get("phone1");
+                    String lastAttemptStr = csvRecord.get("CallRecordLastAttempt-phone1");
+                    String lastResult = csvRecord.get("CallRecordLastResult-phone1");
+                    String conversationId = csvRecord.get("conversationId");
 
                     if (phone == null || phone.trim().isEmpty()) {
                         System.err.println("تخطي صف بسبب نقص رقم الهاتف: " + csvRecord.toMap());
@@ -282,28 +275,20 @@ public class GenesysService {
                     if (lastAttemptStr != null && !lastAttemptStr.trim().isEmpty()) {
                         try {
                             parsedLastAttempt = LocalDateTime.parse(lastAttemptStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-                            //System.out.println("Processing: Phone=" + phone + ", Original lastAttemptStr='" + lastAttemptStr + "', Parsed lastAttempt=" + parsedLastAttempt); // ممكن تعملها comment بعد ما تتأكد إنها شغالة
                         } catch (DateTimeParseException e) {
-                            System.err.println("تحذير: فشل في تحليل تاريخ آخر محاولة: '" + lastAttemptStr + "' للهاتف: " + phone + ". سيتم تخزينه كـ null.");
+                            System.err.println("تحذير: فشل في تحليل lastAttempt String: '" + lastAttemptStr + "' للهاتف: " + phone + ". سيتم تخزينه كـ null.");
                             parsedLastAttempt = null;
                         }
-                    } else {
-                        //System.out.println("تنبيه: لا توجد قيمة لـ lastAttempt للهاتف: " + phone + ". سيتم تخزينه كـ null."); // ممكن تعملها comment بعد ما تتأكد إنها شغالة
                     }
 
-                    // <<<<<<<<<<<<<<< تحديث لوجيك البحث والحفظ >>>>>>>>>>>>>
-                    Contact existingContact = existingContactsMap.get(phone); // البحث في الـ Map اللي عملناه
+                    // <<<<<<<<<<<<<<< هنا التعديل الأساسي في منطق البحث والإضافة/التحديث >>>>>>>>>>>>>>>
+                    // البحث عن سجل موجود بالـ phone والـ lastAttempt معًا
+                    Optional<Contact> existingContactOptional = contactRepository.findByPhoneAndLastAttempt(phone, parsedLastAttempt);
 
-                    if (existingContact != null) {
-                        // لو لقينا Contact بنفس رقم التليفون
+                    if (existingContactOptional.isPresent()) {
+                        // لو السجل موجود (بنفس الـ phone والـ lastAttempt)، يبقى تحديث الحقول الأخرى
+                        Contact existingContact = existingContactOptional.get();
                         boolean updated = false;
-
-                        // تحديث lastAttempt لو الـ CSV عنده قيمة أحدث
-                        if (parsedLastAttempt != null &&
-                                (existingContact.getLastAttempt() == null || parsedLastAttempt.isAfter(existingContact.getLastAttempt()))) {
-                            existingContact.setLastAttempt(parsedLastAttempt);
-                            updated = true;
-                        }
 
                         // تحديث lastResult لو مختلف
                         if (lastResult != null && !lastResult.equals(existingContact.getLastResult())) {
@@ -311,40 +296,39 @@ public class GenesysService {
                             updated = true;
                         }
 
-                        // تحديث conversationId فقط لو مختلف وموجود في الـ CSV
+                        // تحديث conversationId لو مختلف
                         if (conversationId != null && !conversationId.equals(existingContact.getConversationId())) {
                             existingContact.setConversationId(conversationId);
                             updated = true;
                         }
 
+                        // باقي الحقول (conversationStartTime, conversationEndTime, agentName, wrapUpCode, callDurationSeconds)
+                        // سيتم ملؤها بواسطة ميثود updateContactsWithConversationDetails() لاحقاً.
+
                         if (updated) {
                             contactRepository.save(existingContact);
                             recordsUpdated++;
-                            System.out.println("تم تحديث سجل موجود بنجاح: Phone: " + existingContact.getPhone() +
-                                    ", Last Attempt: " + existingContact.getLastAttempt() +
-                                    ", Last Result: " + existingContact.getLastResult() +
-                                    ", Conversation ID: " + existingContact.getConversationId());
+                            System.out.println("تم تحديث سجل موجود بنجاح (من CSV): Phone: " + existingContact.getPhone() + ", Last Attempt: " + existingContact.getLastAttempt() + ", Last Result: " + existingContact.getLastResult() + ", Conversation ID: " + existingContact.getConversationId());
                         } else {
-                            //System.out.println("تخطي سجل موجود (لا توجد تحديثات): Phone: " + phone); // ممكن تعملها comment بعد ما تتأكد إنها شغالة
+                            //System.out.println("لا توجد تحديثات لسجل موجود: Phone: " + phone);
+                            // ممكن تعملها comment بعد ما تتأكد إنها شغالة
                         }
 
                     } else {
-                        // لو رقم التليفون مش موجود خالص في الداتابيز، هنضيف سجل جديد
-                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId); // <<<<< استخدام الـ Constructor الجديد
+                        // لو السجل مش موجود (سواء الـ phone أو الـ lastAttempt مختلف)، هنضيف سجل جديد
+                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId);
                         contactRepository.save(newContact);
                         recordsInserted++;
-                        System.out.println("تم إدخال سجل جديد بنجاح: Phone: " + newContact.getPhone() +
-                                ", Last Attempt: " + newContact.getLastAttempt() +
-                                ", Last Result: " + newContact.getLastResult() +
-                                ", Conversation ID: " + newContact.getConversationId());
+                        System.out.println("تم إدخال سجل جديد بنجاح (من CSV): Phone: " + newContact.getPhone() + ", Last Attempt: " + newContact.getLastAttempt() + ", Last Result: " + newContact.getLastResult() + ", Conversation ID: " + newContact.getConversationId());
                     }
+
+                    // <<<<<<<<<<<<<<< نهاية التعديل الأساسي >>>>>>>>>>>>>>>
                 }
+
                 System.out.println("تم الانتهاء من معالجة " + recordsProcessed + " سجل من الـ CSV.");
-                System.out.println("تم تحديث " + recordsUpdated + " سجل في جدول 'contact_lists'.");
-                System.out.println("تم إدخال " + recordsInserted + " سجل جديد في جدول 'contact_lists'.");
-
+                System.out.println("تم تحديث " + recordsUpdated + " سجل في جدول 'contact_lists' (من CSV).");
+                System.out.println("تم إدخال " + recordsInserted + " سجل جديد في جدول 'contact_lists' (من CSV).");
             }
-
         } catch (IOException e) {
             System.err.println("خطأ في قراءة محتوى CSV: " + e.getMessage());
             e.printStackTrace();
@@ -353,6 +337,8 @@ public class GenesysService {
             e.printStackTrace();
         }
     }
+// <<<<<<<<<<<<<<< نهاية الميثود المعدلة بالكامل >>>>>>>>>>>>>>>
+
 
     // <<<<<<<<<<<<<<< ميثود جديدة: جلب اسم الـ Agent من SCIM API >>>>>>>>>>>>>>>
     public String fetchAgentDisplayName(String userId) {
@@ -405,18 +391,14 @@ public class GenesysService {
         System.out.println("--- بدء تحديث الـ Contacts بتفاصيل المكالمات من Genesys API ---");
         // جلب الـ Contacts اللي ليها conversationId بس لسه مفيش ليها conversationStartTime
         List<Contact> contactsToUpdate = contactRepository.findByConversationIdIsNotNullAndConversationStartTimeIsNull();
-
         System.out.println("تم العثور على " + contactsToUpdate.size() + " سجل لـ Contacts تحتاج لتفاصيل مكالمات.");
         int updatedCount = 0;
-
         for (Contact contact : contactsToUpdate) {
             if (contact.getConversationId() == null || contact.getConversationId().isEmpty()) {
                 System.out.println("تخطي Contact بدون Conversation ID: " + contact.getPhone());
                 continue;
             }
-
             ConversationDetailsResponse details = fetchConversationDetails(contact.getConversationId());
-
             if (details != null) {
                 // تحديث حقول الوقت الجديدة من الـ Conversation Details API
                 contact.setConversationStartTime(details.getConversationStart());
@@ -430,66 +412,79 @@ public class GenesysService {
                     contact.setCallDurationSeconds(null);
                 }
 
-                String selectedAgentId = null;
+                String selectedAgentId = null; // ده اللي هيتخزن فيه الـ userId بتاع الـ agent participant
                 String wrapUpCode = null;
 
-                // البحث عن الـ selectedAgentId والـ wrapUpCode في الـ participants
+                // <<<<<<<<<<<<<<< هنا التعديل الأساسي: البحث عن الـ Agent ID و الـ WrapUpCode >>>>>>>>>>>>>>>
                 for (Participant participant : details.getParticipants()) {
+                    // أولاً: البحث عن الـ userId للـ participant اللي الـ purpose بتاعه "agent"
+                    if ("agent".equalsIgnoreCase(participant.getPurpose()) && participant.getUserId() != null) {
+                        selectedAgentId = participant.getUserId();
+                        // بما إن الـ userId ده هو اللي هنستخدمه كـ selectedAgentId، هنحطه هنا.
+                        // لو عايز تضمن إنه اول agent هتلاقيه، ممكن تحط break هنا،
+                        // بس في معظم الحالات بيكون فيه agent واحد له purpose "agent".
+                        // break; // ممكن تضيفها هنا لو عايز تاخد أول agent ID وتوقف البحث
+                    }
+
+                    // ثانيًا: البحث عن الـ WrapUpCode (بيكون في session داخل participant)
                     if (participant.getSessions() != null) {
                         for (Session session : participant.getSessions()) {
-                            if (selectedAgentId == null && session.getSelectedAgentId() != null) {
-                                selectedAgentId = session.getSelectedAgentId();
-                            }
                             if (wrapUpCode == null && session.getSegments() != null) {
                                 for (Segment segment : session.getSegments()) {
                                     if (segment.getWrapUpCode() != null) {
                                         wrapUpCode = segment.getWrapUpCode();
-                                        break;
+                                        break; // كسر الـ loop ده بمجرد العثور على wrapUpCode
                                     }
                                 }
                             }
-                            if (selectedAgentId != null && wrapUpCode != null) {
+                            if (wrapUpCode != null) { // لو لقينا الـ wrapUpCode نوقف البحث في الـ sessions بتاعة الـ participant ده
                                 break;
                             }
                         }
                     }
+
+                    // لو لقينا الـ selectedAgentId والـ wrapUpCode، نوقف البحث في الـ participants
                     if (selectedAgentId != null && wrapUpCode != null) {
                         break;
                     }
                 }
+                // <<<<<<<<<<<<<<< نهاية التعديل >>>>>>>>>>>>>>>
 
-                // تخزين الـ selectedAgentId والـ wrapUpCode
+                // تخزين الـ selectedAgentId (اللي دلوقتي بقى الـ userId بتاع الـ agent participant) والـ wrapUpCode
                 contact.setSelectedAgentId(selectedAgentId);
                 contact.setWrapUpCode(wrapUpCode);
 
-                // <<<<<<<<<<<<<<< إضافة استدعاء لجلب اسم الـ Agent هنا >>>>>>>>>>>>>>>
+                // استدعاء لجلب اسم الـ Agent باستخدام الـ userId اللي لقيناه
                 if (selectedAgentId != null && !selectedAgentId.isEmpty()) {
                     String agentName = fetchAgentDisplayName(selectedAgentId); // استدعاء الميثود الجديدة
                     contact.setAgentName(agentName);
                 } else {
                     contact.setAgentName(null); // لو مفيش Agent ID، يبقى الاسم null
                 }
-                // <<<<<<<<<<<<<<< نهاية الإضافة >>>>>>>>>>>>>>>
 
                 contactRepository.save(contact);
                 updatedCount++;
-                System.out.println("تم تحديث تفاصيل المكالمة لـ Contact: " + contact.getPhone() +
-                        " (Conversation ID: " + contact.getConversationId() + ")" +
-                        " Conversation Start: " + contact.getConversationStartTime() +
-                        ", Conversation End: " + contact.getConversationEndTime() +
-                        ", Duration: " + contact.getCallDurationSeconds() + " ثانية" +
-                        ", Agent ID: " + selectedAgentId +
-                        ", Agent Name: " + contact.getAgentName() + // <<<< log لاسم الـ Agent الجديد
-                        ", WrapUpCode: " + wrapUpCode);
-            } else {
-                System.err.println("لم يتم جلب تفاصيل المكالمة لـ Contact: " + contact.getPhone() + " (ID: " + contact.getConversationId() + ")");
-            }
 
-            // ممكن تضيف هنا Thread.sleep() لو محتاج تتحكم في معدل طلبات الـ API
-            // Thread.sleep(500); // 500 ملي ثانية بين كل طلب وآخر
+                System.out.println("تم تحديث تفاصيل المكالمة لـ Contact: " + contact.getPhone()
+                        + " (Conversation ID: " + contact.getConversationId() + ")"
+                        + " Conversation Start: " + contact.getConversationStartTime()
+                        + ", Conversation End: " + contact.getConversationEndTime()
+                        + ", Duration: " + contact.getCallDurationSeconds() + " ثانية"
+                        + ", Agent ID (User ID): " + selectedAgentId
+                        + ", Agent Name: " + contact.getAgentName()
+                        + ", WrapUpCode: " + wrapUpCode);
+            } else {
+                System.err.println("لم يتم جلب تفاصيل المكالمة لـ Contact: " + contact.getPhone()
+                        + " (ID: " + contact.getConversationId() + ")");
+            }
         }
         System.out.println("--- انتهاء تحديث الـ Contacts بتفاصيل المكالمات. تم تحديث " + updatedCount + " سجل. ---");
     }
+
+
+
+
+
 
     private String extractDirectCsvLink(String htmlContent) {
         Pattern pattern = Pattern.compile("href=\"(https?://[^\"]+\\.csv)\"|url='(https?://[^']+\\.csv)'", Pattern.CASE_INSENSITIVE);
