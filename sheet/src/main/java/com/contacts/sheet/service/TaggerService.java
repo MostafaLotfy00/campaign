@@ -65,7 +65,7 @@ public class TaggerService {
         Map<String, Object> callAttempt = new HashMap<>();
 
         // Required: order_id
-        callAttempt.put("order_id", String.valueOf(contact.getPhone()));
+        callAttempt.put("order_id", String.valueOf(contact.getOrderId()));
 
         // Required: call_datetime
         if (contact.getLastAttempt() != null) {

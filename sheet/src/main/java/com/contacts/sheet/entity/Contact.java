@@ -49,6 +49,12 @@ public class Contact {
     @Column(name = "call_duration_seconds")
     private Long callDurationSeconds;
 
+    @Column(name = "order_id")
+    private String orderId;
+
+    @Column(name = "status", nullable = false)
+    private String status;
+
     @Getter
     @Column(name = "selected_agent_id")
     private String selectedAgentId;
@@ -126,18 +132,21 @@ public class Contact {
         // The nullification logic will be applied when setLastResult is called.
     }
 
-    public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId) {
+    public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId,  String orderId) {
         this.phone = phone;
         this.lastAttempt = lastAttempt;
+        this.orderId = orderId; // تخزين orderId
         setLastResult(lastResult); // Use the custom setter
         setConversationId(conversationId); // Use the custom setter
         this.createdAt = LocalDateTime.now();
+        this.status = "not sent"; // <<<<< تعيين القيمة الافتراضية هنا
+
         // The nullification logic will be applied when setLastResult and setConversationId are called.
     }
 
     public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId,
                    LocalDateTime conversationStartTime, LocalDateTime conversationEndTime,
-                   String selectedAgentId, String agentName, String wrapUpCode, Long callDurationSeconds) {
+                   String selectedAgentId, String agentName, String wrapUpCode, Long callDurationSeconds, String orderId) {
         this.phone = phone;
         this.lastAttempt = lastAttempt;
         setLastResult(lastResult); // Use the custom setter
@@ -147,6 +156,8 @@ public class Contact {
         setSelectedAgentId(selectedAgentId); // Use the custom setter
         setAgentName(agentName); // Use the custom setter
         this.wrapUpCode = wrapUpCode;
+        this.orderId = orderId;
+        this.status = "not sent";
         this.callDurationSeconds = callDurationSeconds;
         this.createdAt = LocalDateTime.now();
         // The nullification logic will be applied by the custom setters.

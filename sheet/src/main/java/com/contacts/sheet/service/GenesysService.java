@@ -265,7 +265,7 @@ public class GenesysService {
                     String lastAttemptStr = csvRecord.get("CallRecordLastAttempt-phone1");
                     String lastResult = csvRecord.get("CallRecordLastResult-phone1");
                     String conversationId = csvRecord.get("conversationId");
-
+                    String orderId = csvRecord.get("orderId"); // <<<<< تأكد من اسم العمود "orderId" في ملف الـ CSV
                     if (phone == null || phone.trim().isEmpty()) {
                         System.err.println("تخطي صف بسبب نقص رقم الهاتف: " + csvRecord.toMap());
                         continue;
@@ -316,10 +316,10 @@ public class GenesysService {
 
                     } else {
                         // لو السجل مش موجود (سواء الـ phone أو الـ lastAttempt مختلف)، هنضيف سجل جديد
-                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId);
+                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId);
                         contactRepository.save(newContact);
                         recordsInserted++;
-                        System.out.println("تم إدخال سجل جديد بنجاح (من CSV): Phone: " + newContact.getPhone() + ", Last Attempt: " + newContact.getLastAttempt() + ", Last Result: " + newContact.getLastResult() + ", Conversation ID: " + newContact.getConversationId());
+                        System.out.println("تم إدخال سجل جديد بنجاح (من CSV): Phone: " + newContact.getPhone() + ", Last Attempt: " + newContact.getLastAttempt() + ", Last Result: " + newContact.getLastResult() + ", Conversation ID: " + newContact.getConversationId() + ", Order ID: " + newContact.getOrderId());
                     }
 
                     // <<<<<<<<<<<<<<< نهاية التعديل الأساسي >>>>>>>>>>>>>>>
