@@ -112,7 +112,7 @@ public class GenesysService {
     public ConversationDetailsResponse fetchConversationDetails(String conversationId) {
         String accessToken = getAccessToken(); // ممكن تمرر الـ token لو مش عاوز تجيب واحد جديد كل مرة
         if (accessToken == null) {
-            System.err.println("فشل الحصول على Access Token لـ Conversation Details API.");
+            System.err.println("Failed to obtain Access Token for Conversation Details API.");
             return null;
         }
 
@@ -125,7 +125,7 @@ public class GenesysService {
 
         try {
             return retry(3, 2000, () -> {
-                System.out.println("🔍 جاري جلب تفاصيل المكالمة لـ Conversation ID: " + conversationId);
+                System.out.println("🔍 Fetching call details for Conversation ID: " + conversationId);
 
                 ResponseEntity<ConversationDetailsResponse> response = restTemplate.exchange(
                         detailsUrl,
@@ -135,14 +135,14 @@ public class GenesysService {
                 );
 
                 if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    System.out.println("✅ تم جلب تفاصيل المكالمة بنجاح لـ ID: " + conversationId);
+                    System.out.println("✅ Successfully fetched call details for ID: " + conversationId);
                     return response.getBody();
                 } else {
-                    throw new RuntimeException("❌ فشل جلب تفاصيل المكالمة. Status: " + response.getStatusCode());
+                    throw new RuntimeException("❌ Failed to fetch call details. Status: " + response.getStatusCode());
                 }
             });
         } catch (Exception e) {
-            System.err.println("🚫 فشل نهائيًا في جلب تفاصيل المكالمة لـ ID: " + conversationId + ": " + e.getMessage());
+            System.err.println("🚫 Failed permanently to fetch call details for ID: " + conversationId + ": " + e.getMessage());
             return null;
         }
     }
@@ -186,72 +186,80 @@ public class GenesysService {
         HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
 
         try {
-            System.out.println("جاري محاولة جلب المحتوى من رابط التحميل: " + downloadUri);
+            System.out.println("Attempting to fetch content from the download link: " + downloadUri);
             ResponseEntity<String> initialResponse = restTemplate.exchange(downloadUri, HttpMethod.GET, requestEntity, String.class);
             String content = initialResponse.getBody();
 
             if (content != null && content.trim().startsWith("<!DOCTYPE html>")) {
-                System.out.println("تم استلام محتوى HTML، جاري محاولة استخراج رابط الـ CSV المباشر...");
+                System.out.println("HTML content received, attempting to extract the direct CSV link...");
                 String directCsvLink = extractDirectCsvLink(content);
 
                 if (directCsvLink != null) {
-                    System.out.println("تم استخراج رابط CSV مباشر: " + directCsvLink + ". جاري محاولة التحميل من هذا الرابط.");
+                    System.out.println("Direct CSV link extracted: " + directCsvLink + ". Attempting to download from this link...");
                     ResponseEntity<String> csvResponse = restTemplate.exchange(directCsvLink, HttpMethod.GET, requestEntity, String.class);
                     return csvResponse.getBody();
                 } else {
-                    System.err.println("لم نتمكن من استخراج رابط CSV مباشر من الـ HTML. المحتوى مازال HTML.");
+                    System.err.println("Failed to extract a direct CSV link from the HTML. The content is still HTML.");
                     return content;
                 }
             } else {
-                System.out.println("تم استلام محتوى يبدو أنه CSV مباشرة من الـ URI الأصلي.");
+                System.out.println("Received content that appears to be CSV directly from the original URI.");
                 return content;
             }
 
         } catch (HttpClientErrorException e) {
-            System.err.println("خطأ في جلب البيانات من " + downloadUri + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-            throw new RuntimeException("فشل في جلب البيانات: " + e.getResponseBodyAsString(), e);
+            System.err.println("Error fetching data from " + downloadUri + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to fetch data: " + e.getResponseBodyAsString(), e);
         } catch (Exception e) {
-            System.err.println("خطأ غير متوقع في جلب البيانات من " + downloadUri + ": " + e.getMessage());
+            System.err.println("Unexpected error while fetching data from " + downloadUri + ": " + e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException("فشل في جلب البيانات.", e);
+            throw new RuntimeException("Failed to fetch data.", e);
         }
     }
 
     // دالة رئيسية لعملية المزامنة (هتشتغل عن طريق الـ Scheduler)
     public void syncContactsFromGenesysApi() { // اسم الميثود اللي هتشتغل من الـ Scheduler
-        System.out.println("--- بدء مزامنة بيانات Genesys Cloud ---");
+        System.out.println("--- Starting Genesys Cloud data synchronization ---");
+
         String accessToken = null;
         try {
             accessToken = getAccessToken();
-            System.out.println("تم الحصول على Access Token بنجاح.");
+            System.out.println("Access Token retrieved successfully.");
+
 
             String downloadUri = initiateContactExport(accessToken);
-            System.out.println("تم بدء Export الـ Contacts. رابط التحميل: " + downloadUri);
+            System.out.println("Contacts export started successfully. Download link: " + downloadUri);
 
-            System.out.println("جاري الانتظار لمدة 10 ثواني حتى يصبح ملف الـ Export جاهزاً...");
+
+            System.out.println("Waiting for 10 seconds for the export file to be ready...");
+
             Thread.sleep(10000); // ممكن تزيد الوقت لو لسه المشكلة موجودة
 
             String csvContent = readExportData(downloadUri, accessToken);
             if (csvContent == null || csvContent.trim().isEmpty() || csvContent.trim().startsWith("<!DOCTYPE html>")) {
                 if (csvContent != null && csvContent.trim().startsWith("<!DOCTYPE html>")) {
-                    System.err.println("فشل في الحصول على محتوى CSV. تم استلام HTML حتى بعد الانتظار ومحاولة الاستخراج. يرجى مراجعة سلوك Genesys API أو زيادة مدة الانتظار.");
+                    System.err.println("Failed to retrieve CSV content. Received HTML even after waiting and retrying. Please review Genesys API behavior or consider increasing the wait time.");
                 } else {
-                    System.err.println("لم يتم استرجاع أي محتوى CSV أو المحتوى فارغ، لا يمكن المتابعة لتخزين البيانات.");
+                    System.err.println("No CSV content was retrieved or the content is empty; cannot proceed with data storage.");
                 }
                 return;
             }
 
-            System.out.println("تم استرجاع محتوى CSV بنجاح. جاري المعالجة...");
+            System.out.println("CSV content retrieved successfully. Processing...");
+
             processAndSaveCsv(csvContent);
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println("تم مقاطعة الـ Thread أثناء الانتظار: " + e.getMessage());
+            System.err.println("Thread was interrupted during wait: " + e.getMessage());
+
         } catch (Exception e) {
-            System.err.println("فشلت مزامنة بيانات Genesys Cloud: " + e.getMessage());
+            System.err.println("Failed to synchronize Genesys Cloud data: " + e.getMessage());
+
             e.printStackTrace();
         }
-        System.out.println("--- انتهاء مزامنة بيانات Genesys Cloud ---");
+        System.out.println("--- Finished synchronizing Genesys Cloud data ---");
+
     }
 
     private void processAndSaveCsv(String csvContent) {
@@ -281,7 +289,7 @@ public class GenesysService {
                     String conversationId = csvRecord.get("conversationId");
                     String orderId = csvRecord.get("orderId"); // <<<<< تأكد من اسم العمود "orderId" في ملف الـ CSV
                     if (phone == null || phone.trim().isEmpty()) {
-                        System.err.println("تخطي صف بسبب نقص رقم الهاتف: " + csvRecord.toMap());
+                        System.err.println("Skipping row due to missing phone number: " + csvRecord.toMap());
                         continue;
                     }
 
@@ -290,7 +298,7 @@ public class GenesysService {
                         try {
                             parsedLastAttempt = LocalDateTime.parse(lastAttemptStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
                         } catch (DateTimeParseException e) {
-                            System.err.println("تحذير: فشل في تحليل lastAttempt String: '" + lastAttemptStr + "' للهاتف: " + phone + ". سيتم تخزينه كـ null.");
+                            System.err.println("Warning: Failed to parse lastAttempt string: '" + lastAttemptStr + "' for phone: " + phone + ". It will be stored as null.");
                             parsedLastAttempt = null;
                         }
                     }
@@ -322,7 +330,7 @@ public class GenesysService {
                         if (updated) {
                             contactRepository.save(existingContact);
                             recordsUpdated++;
-                            System.out.println("تم تحديث سجل موجود بنجاح (من CSV): Phone: " + existingContact.getPhone() + ", Last Attempt: " + existingContact.getLastAttempt() + ", Last Result: " + existingContact.getLastResult() + ", Conversation ID: " + existingContact.getConversationId());
+                            System.out.println("Successfully updated existing record (from CSV): Phone: " + existingContact.getPhone() + ", Last Attempt: " + existingContact.getLastAttempt() + ", Last Result: " + existingContact.getLastResult() + ", Conversation ID: " + existingContact.getConversationId());
                         } else {
                             //System.out.println("لا توجد تحديثات لسجل موجود: Phone: " + phone);
                             // ممكن تعملها comment بعد ما تتأكد إنها شغالة
@@ -333,21 +341,24 @@ public class GenesysService {
                         Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId);
                         contactRepository.save(newContact);
                         recordsInserted++;
-                        System.out.println("تم إدخال سجل جديد بنجاح (من CSV): Phone: " + newContact.getPhone() + ", Last Attempt: " + newContact.getLastAttempt() + ", Last Result: " + newContact.getLastResult() + ", Conversation ID: " + newContact.getConversationId() + ", Order ID: " + newContact.getOrderId());
+                        System.out.println("Successfully inserted new record (from CSV): Phone: " + newContact.getPhone() + ", Last Attempt: " + newContact.getLastAttempt() + ", Last Result: " + newContact.getLastResult() + ", Conversation ID: " + newContact.getConversationId() + ", Order ID: " + newContact.getOrderId());
                     }
 
                     // <<<<<<<<<<<<<<< نهاية التعديل الأساسي >>>>>>>>>>>>>>>
                 }
 
-                System.out.println("تم الانتهاء من معالجة " + recordsProcessed + " سجل من الـ CSV.");
-                System.out.println("تم تحديث " + recordsUpdated + " سجل في جدول 'contact_lists' (من CSV).");
-                System.out.println("تم إدخال " + recordsInserted + " سجل جديد في جدول 'contact_lists' (من CSV).");
+                System.out.println("Finished processing " + recordsProcessed + " records from the CSV.");
+                System.out.println("Updated " + recordsUpdated + " records in the 'contact_lists' table (from CSV).");
+                System.out.println("Inserted " + recordsInserted + " new records into the 'contact_lists' table (from CSV).");
+
             }
         } catch (IOException e) {
-            System.err.println("خطأ في قراءة محتوى CSV: " + e.getMessage());
+            System.err.println("Error reading CSV content: " + e.getMessage());
+
             e.printStackTrace();
         } catch (Exception e) {
-            System.err.println("حدث خطأ أثناء معالجة وحفظ CSV: " + e.getMessage());
+            System.err.println("An error occurred while processing and saving the CSV: " + e.getMessage());
+
             e.printStackTrace();
         }
     }
@@ -362,7 +373,7 @@ public class GenesysService {
 
         String accessToken = getAccessToken(); // ممكن تعيد استخدام الـ token لو لسه صالح
         if (accessToken == null) {
-            System.err.println("فشل الحصول على Access Token لـ SCIM Users API.");
+            System.err.println("Failed to obtain Access Token for SCIM Users API.");
             return null;
         }
 
@@ -375,7 +386,7 @@ public class GenesysService {
 
         try {
             return retry(3, 2000, () -> {
-                System.out.println("🔍 جاري جلب بيانات الـ Agent لـ User ID: " + userId);
+                System.out.println("🔍 Fetching Agent data for User ID: " + userId);
 
                 ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
                         scimUserUrl,
@@ -385,14 +396,14 @@ public class GenesysService {
                 );
 
                 if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    System.out.println("✅ تم جلب بيانات الـ Agent بنجاح لـ User ID: " + userId);
+                    System.out.println("✅ Successfully fetched Agent data for User ID: " + userId);
                     return response.getBody().getDisplayName();
                 } else {
-                    throw new RuntimeException("❌ فشل جلب بيانات الـ Agent. Status: " + response.getStatusCode());
+                    throw new RuntimeException("❌ Failed to fetch Agent data. Status: " + response.getStatusCode());
                 }
             });
         } catch (Exception e) {
-            System.err.println("🚫 فشل نهائيًا في جلب بيانات الـ Agent لـ User ID: " + userId + ": " + e.getMessage());
+            System.err.println("🚫 Failed permanently to fetch Agent data for User ID: " + userId + ": " + e.getMessage());
             return null;
         }
     }
@@ -401,14 +412,14 @@ public class GenesysService {
 
 
     public void updateContactsWithConversationDetails() {
-        System.out.println("--- بدء تحديث الـ Contacts بتفاصيل المكالمات من Genesys API ---");
+        System.out.println("--- Starting to update Contacts with call details from Genesys API ---");
         // جلب الـ Contacts اللي ليها conversationId بس لسه مفيش ليها conversationStartTime
         List<Contact> contactsToUpdate = contactRepository.findByConversationIdIsNotNullAndConversationStartTimeIsNull();
-        System.out.println("تم العثور على " + contactsToUpdate.size() + " سجل لـ Contacts تحتاج لتفاصيل مكالمات.");
+        System.out.println("Found " + contactsToUpdate.size() + " contact records that require call details.");
         int updatedCount = 0;
         for (Contact contact : contactsToUpdate) {
             if (contact.getConversationId() == null || contact.getConversationId().isEmpty()) {
-                System.out.println("تخطي Contact بدون Conversation ID: " + contact.getPhone());
+                System.out.println("Skipping contact without Conversation ID: " + contact.getPhone());
                 continue;
             }
             ConversationDetailsResponse details = fetchConversationDetails(contact.getConversationId());
@@ -478,20 +489,21 @@ public class GenesysService {
                 contactRepository.save(contact);
                 updatedCount++;
 
-                System.out.println("تم تحديث تفاصيل المكالمة لـ Contact: " + contact.getPhone()
+                System.out.println("✅ Call details updated for Contact: " + contact.getPhone()
                         + " (Conversation ID: " + contact.getConversationId() + ")"
                         + " Conversation Start: " + contact.getConversationStartTime()
                         + ", Conversation End: " + contact.getConversationEndTime()
-                        + ", Duration: " + contact.getCallDurationSeconds() + " ثانية"
+                        + ", Duration: " + contact.getCallDurationSeconds() + " seconds."
                         + ", Agent ID (User ID): " + selectedAgentId
                         + ", Agent Name: " + contact.getAgentName()
                         + ", WrapUpCode: " + wrapUpCode);
             } else {
-                System.err.println("لم يتم جلب تفاصيل المكالمة لـ Contact: " + contact.getPhone()
+                System.err.println("❌ Failed to fetch call details for Contact: " + contact.getPhone()
                         + " (ID: " + contact.getConversationId() + ")");
+
             }
         }
-        System.out.println("--- انتهاء تحديث الـ Contacts بتفاصيل المكالمات. تم تحديث " + updatedCount + " سجل. ---");
+        System.out.println("--- Finished updating Contacts with call details. " + updatedCount + " records updated. ---");
     }
 
 
@@ -513,9 +525,10 @@ public class GenesysService {
             return metaRefreshMatcher.group(1);
         }
 
-        System.err.println("تحذير: لم يتم العثور على رابط CSV مباشر في محتوى الـ HTML. " +
-                "سنحاول التحميل من الـ URI الأصلي، لكن قد يكون مازال HTML. " +
-                "عينة من المحتوى: " + htmlContent.substring(0, Math.min(htmlContent.length(), 500)));
+        System.err.println("Warning: No direct CSV link found in the HTML content. " +
+                "Will attempt to download from the original URI, but it may still be HTML. " +
+                "Content sample: " + htmlContent.substring(0, Math.min(htmlContent.length(), 500)));
+
         return null;
     }
     public List<Contact> getContacts() {
