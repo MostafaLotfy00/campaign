@@ -1,9 +1,11 @@
 package com.contacts.sheet.service;
 
+import com.contacts.sheet.Repository.ContactRepo;
 import com.contacts.sheet.entity.Contact;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
@@ -20,7 +22,8 @@ public class TaggerService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
-
+    @Autowired
+private final ContactRepo contactRepo;
     private final String TAGGER_API_URL = "https://admin-internal.dev.taager.com/dialer/webhooks/genesys/call-attempts";
 
     public void sendContactsToTagger(List<Contact> contacts) {
@@ -30,7 +33,17 @@ public class TaggerService {
             return;
         }
 
-        List<Map<String, Object>> callAttempts = contacts.stream()
+        // ✅ Step 1: Filter contacts where status = "not sent"
+        List<Contact> unsentContacts = contacts.stream()
+                .filter(contact -> "not sent".equalsIgnoreCase(contact.getStatus()))
+                .collect(Collectors.toList());
+
+        if (unsentContacts.isEmpty()) {
+            System.out.println("✅ All contacts have already been sent. Nothing to send.");
+            return;
+        }
+
+        List<Map<String, Object>> callAttempts = unsentContacts.stream()
                 .map(this::convertContactToCallAttempt)
                 .collect(Collectors.toList());
 
@@ -56,6 +69,11 @@ public class TaggerService {
             );
 
             System.out.println("✅ Response from Tagger: " + response.getBody());
+            if (response.getStatusCode().is2xxSuccessful()) {
+                unsentContacts.forEach(contact -> contact.setStatus("sent"));
+                contactRepo.saveAll(unsentContacts); // 🔁 persist the updated status
+                System.out.println("✅ Status updated to 'sent' for all sent contacts.");
+            }
         } catch (Exception e) {
             System.err.println("❌ Error sending contacts: " + e.getMessage());
         }
