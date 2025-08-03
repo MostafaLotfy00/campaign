@@ -23,24 +23,23 @@ public class GenesysScheduler {
 
     @Scheduled(fixedRate = 600000)
     public void runGenesysCsvSyncJob() {
-        System.out.println("--- Scheduler: Starting Genesys data sync task from CSV ---");
+        logger.info("--- Scheduler: Starting Genesys data sync task from CSV ---");
         genesysService.syncContactsFromGenesysApi();
-        System.out.println("--- Scheduler: Finished executing Genesys data sync task from CSV ---");
-
+        logger.info("--- Scheduler: Finished executing Genesys data sync task from CSV ---");
     }
 
     @Scheduled(fixedRate = 600000, initialDelay = 60000)
     public void runConversationDetailsUpdateJob() {
-        System.out.println("--- Scheduler: Starting call details update task ---");
+        logger.info("--- Scheduler: Starting call details update task ---");
         genesysService.updateContactsWithConversationDetails();
-        System.out.println("--- Scheduler: Finished running call details update task ---");
+        logger.info("--- Scheduler: Finished running call details update task ---");
     }
 
     @Scheduled(fixedRate = 600000, initialDelay = 120000)
     public void runSendToTaggerJob() {
-        System.out.println("--- Scheduler: Starting data sending task for Tagger ---");
+        logger.info("--- Scheduler: Starting data sending task for Tagger ---");
         List<Contact> contacts = genesysService.getContacts(); // تأكد أن الميثود دي موجودة
         taggerService.sendContactsToTagger(contacts);
-        System.out.println("--- Scheduler: Finished data sending task for Tagger ---");
+        logger.info("--- Scheduler: Finished data sending task for Tagger ---");
     }
 }

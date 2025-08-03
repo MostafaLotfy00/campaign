@@ -1,7 +1,10 @@
 package com.contacts.sheet.controller;
 
+import com.contacts.sheet.component.GenesysScheduler;
 import com.contacts.sheet.entity.Contact;
 import com.contacts.sheet.service.ReportService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -17,13 +20,14 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 @RestController
 @RequestMapping("/api/reports")
 public class ReportController {
 
     private final ReportService reportService;
-
+    private static final Logger logger = LoggerFactory.getLogger(ReportController.class);
     public ReportController(ReportService reportService) {
         this.reportService = reportService;
     }
@@ -45,7 +49,8 @@ public class ReportController {
         } else {
             // لو مفيش تاريخ، بنستخدم تاريخ اليوم الحالي
             reportDate = LocalDate.now();
-            System.out.println("لم يتم تحديد تاريخ، جاري إنشاء تقرير لتاريخ اليوم: " + reportDate);
+            logger.info("No date provided. Generating report for today's date: {}", reportDate);
+
         }
 
         List<Contact> contacts = reportService.getContactsByDate(reportDate);
@@ -66,7 +71,8 @@ public class ReportController {
             // بنرجع المحتوى كـ ByteArrayResource
             ByteArrayResource resource = new ByteArrayResource(csvContent.getBytes(StandardCharsets.UTF_8));
 
-            System.out.println("تم إنشاء تقرير CSV بنجاح، جاري إرساله للتحميل.");
+            logger.info("CSV report generated successfully. Preparing it for download.");
+
             return ResponseEntity.ok()
                     .headers(headers)
                     .contentLength(resource.contentLength())
@@ -74,10 +80,10 @@ public class ReportController {
                     .body(resource);
 
         } catch (IOException e) {
-            System.err.println("خطأ أثناء إنشاء أو إرسال تقرير CSV: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("Error while generating or sending CSV report: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError()
                     .body(new ByteArrayResource("Error generating CSV report.".getBytes(StandardCharsets.UTF_8)));
         }
+
     }
 }

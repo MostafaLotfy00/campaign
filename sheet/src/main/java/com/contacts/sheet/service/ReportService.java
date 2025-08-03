@@ -2,11 +2,15 @@ package com.contacts.sheet.service;
 
  // تأكد من الـ package الصحيح لـ ContactRepository
 import com.contacts.sheet.Repository.ContactRepo;
+import com.contacts.sheet.controller.ReportController;
 import com.contacts.sheet.entity.Contact;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.time.LocalDate;
@@ -16,7 +20,7 @@ import java.util.List;
 public class ReportService {
 
     private final ContactRepo contactRepository;
-
+    private static final Logger logger = LoggerFactory.getLogger(ReportService.class);
     public ReportService(ContactRepo contactRepository) {
         this.contactRepository = contactRepository;
     }
@@ -66,7 +70,8 @@ public class ReportService {
                 );
             }
         }
-        System.out.println("تم إنشاء محتوى CSV بنجاح.");
+        logger.info("CSV content generated successfully.");
+
         return writer.toString();
     }
 }

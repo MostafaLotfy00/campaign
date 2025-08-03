@@ -5,6 +5,8 @@ import com.contacts.sheet.entity.Contact;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -22,28 +24,29 @@ import static com.contacts.sheet.configration.RetryUtils.retry;
 @RequiredArgsConstructor
 public class TaggerService {
 
+    private static final Logger logger = LoggerFactory.getLogger(TaggerService.class);
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+
     @Autowired
-private final ContactRepo contactRepo;
+    private final ContactRepo contactRepo;
+
     private final String TAGGER_API_URL = "https://admin-internal.dev.taager.com/dialer/webhooks/genesys/call-attempts";
-
-
 
     public void sendContactsToTagger(List<Contact> contacts) {
         String accessToken = getAccessTokenFromKeycloak();
         if (accessToken == null) {
-            System.err.println("❌ Failed to retrieve access token. Aborting.");
+            logger.error("❌ Failed to retrieve access token. Aborting.");
             return;
         }
 
-        // Step 1: Filter contacts with status "not sent"
         List<Contact> unsentContacts = contacts.stream()
                 .filter(contact -> "not sent".equalsIgnoreCase(contact.getStatus()))
                 .collect(Collectors.toList());
 
         if (unsentContacts.isEmpty()) {
-            System.out.println("✅ All contacts have already been sent. Nothing to send.");
+            logger.info("✅ All contacts have already been sent. Nothing to send.");
             return;
         }
 
@@ -59,11 +62,9 @@ private final ContactRepo contactRepo;
         headers.setBearerAuth(accessToken);
 
         try {
-            // Log payload
             String jsonPayload = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
-            System.out.println("📦 JSON Payload:\n" + jsonPayload);
+            logger.debug("📦 JSON Payload:\n{}", jsonPayload);
 
-            // Retry sending request
             ResponseEntity<String> response = retry(3, 2000, () -> {
                 HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
                 return restTemplate.exchange(
@@ -74,43 +75,34 @@ private final ContactRepo contactRepo;
                 );
             });
 
-            System.out.println("✅ Response from Tagger: " + response.getBody());
+            logger.info("✅ Response from Tagger: {}", response.getBody());
 
             if (response.getStatusCode().is2xxSuccessful()) {
                 unsentContacts.forEach(contact -> contact.setStatus("sent"));
                 contactRepo.saveAll(unsentContacts);
-                System.out.println("✅ Status updated to 'sent' for all sent contacts.");
+                logger.info("✅ Status updated to 'sent' for all sent contacts.");
             }
 
         } catch (Exception e) {
-            System.err.println("🚫 Final failure after retries: " + e.getMessage());
+            logger.error("🚫 Final failure after retries: {}", e.getMessage(), e);
         }
     }
-
 
     private Map<String, Object> convertContactToCallAttempt(Contact contact) {
         Map<String, Object> callAttempt = new HashMap<>();
 
-        // Required: order_id
         callAttempt.put("order_id", String.valueOf(contact.getOrderId()));
 
-        // Required: call_datetime
         if (contact.getLastAttempt() != null) {
             callAttempt.put("call_datetime", contact.getLastAttempt().atOffset(ZoneOffset.UTC).toString());
         }
 
-        // Default: wrap_up_reason = "No Answer"
         callAttempt.put("wrap_up_reason", contact.getWrapUpCode() != null ? contact.getWrapUpCode() : "No Answer");
-
-        // Default: call_duration = 0
         callAttempt.put("call_duration", (contact.getCallDurationSeconds() != null && contact.getCallDurationSeconds() > 0)
                 ? contact.getCallDurationSeconds()
                 : 0);
-
-        // Default: agent_id = "unknown"
         callAttempt.put("agent_id", contact.getSelectedAgentId() != null ? contact.getSelectedAgentId() : "unknown");
 
-        // Optional: callback_requested logic
         if ("Callback Requested".equalsIgnoreCase(contact.getWrapUpCode())) {
             callAttempt.put("callback_requested", true);
 
@@ -151,15 +143,8 @@ private final ContactRepo contactRepo;
                 }
             });
         } catch (Exception e) {
-            System.err.println("🚫 Failed to get access token after retries: " + e.getMessage());
+            logger.error("🚫 Failed to get access token after retries: {}", e.getMessage(), e);
             return null;
         }
     }
-
-
-
-
-
-
-
 }

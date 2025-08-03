@@ -1,18 +1,21 @@
 package com.contacts.sheet.configration;
-import com.contacts.sheet.service.TaggerService;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class RetryUtils {
 
-    public static  <T>  T retry(int maxAttempts, long delayMillis, RetryableOperation<T> operation) {
+    private static final Logger logger = LoggerFactory.getLogger(RetryUtils.class);
+
+    public static <T> T retry(int maxAttempts, long delayMillis, RetryableOperation<T> operation) {
         int attempt = 0;
         while (attempt < maxAttempts) {
             try {
                 attempt++;
-                System.out.println("🔁 Attempt " + attempt + "...");
+                logger.info("🔁 Attempt {}...", attempt);
                 return operation.execute();
             } catch (Exception e) {
-                System.err.println("❌ Attempt " + attempt + " failed: " + e.getMessage());
+                logger.error("❌ Attempt {} failed: {}", attempt, e.getMessage(), e);
                 if (attempt < maxAttempts) {
                     try {
                         Thread.sleep(delayMillis);
@@ -25,7 +28,7 @@ public class RetryUtils {
         }
         throw new RuntimeException("🚫 Operation failed after " + maxAttempts + " attempts.");
     }
-    // Functional interface
+
     @FunctionalInterface
     public interface RetryableOperation<T> {
         T execute() throws Exception;
