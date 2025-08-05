@@ -1,9 +1,8 @@
 package com.contacts.sheet.service;
 
 import com.contacts.sheet.Repository.ContactRepo;
-import com.contacts.sheet.component.GenesysScheduler;
 import com.contacts.sheet.entity.Contact;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.contacts.sheet.model.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -16,11 +15,6 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
-import com.contacts.sheet.model.ConversationDetailsResponse; // <<<<< إضافة Import جديد
-import com.contacts.sheet.model.Participant; // <<<<< إضافة Import جديد
-import com.contacts.sheet.model.Session;     // <<<<< إضافة Import جديد
-import com.contacts.sheet.model.Segment;     // <<<<< إضافة Import جديد
-import com.contacts.sheet.model.ScimUserResponse; // <<<<<< أضف هذا
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -32,16 +26,11 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.StringReader;
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors; // <<-- إضافة Import جديد مهم هنا
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import static com.contacts.sheet.configration.RetryUtils.retry;
 
 
@@ -61,19 +50,88 @@ public class GenesysService {
     @Value("${genesys.contact-list-id}")
     private String contactListId;
 
+    private static final int MAX_RETRIES = 3;
     private final RestTemplate restTemplate; // عشان نعمل HTTP requests
     private final ContactRepo contactRepository; // عشان نتعامل مع الداتابيز
     private static final Logger logger = LoggerFactory.getLogger(GenesysService.class);
     // Constructor بيعمل حقن للـ RestTemplate والـ ContactRepository تلقائي
-    public GenesysService(RestTemplate restTemplate, ContactRepo contactRepository) {
+    public GenesysService(RestTemplate restTemplate, ContactRepo contactRepository  ) {
         this.restTemplate = restTemplate;
         this.contactRepository = contactRepository;
     }
+    //First iteration for Genesys Cloud
+    public void syncContactsFromGenesysApi() {
+        logger.info("************Start First Iteration of Genesys Cloud **************");
+        logger.info("=== [SYNC START] Initiating synchronization with Genesys Cloud contacts ===");
+        String accessToken = null;
+        String downloadUri = null;
+        String csvContent = null;
+        // Step 1: Get Access Token
+        try {
+            logger.info("[STEP 1] 🔄 Attempting to retrieve OAuth access token for Genesys Cloud... please wait ⏳");
+            accessToken = getAccessToken();
+            logger.info("[SUCCESS ✅] Access token successfully retrieved.");}
+        catch (Exception e) {
+            logger.error("[STEP 1 - ERROR] Failed to retrieve access token. Check logs inside getAccessToken() for more details.");
+            logger.info("=== [SYNC ABORTED] Cannot proceed without access token ===");
+            return;}
 
-    // دالة لجلب الـ Access Token من Genesys Cloud
+        // Step 2: Initiate Export
+        try {
+            logger.info("[STEP 2 🔄]  Initiating contact export request to Genesys Cloud... please wait ⏳");
+            downloadUri = initiateContactExport(accessToken);
+            logger.info("[SUCCESS ✅] Contact export initiated. Download URI: {}", downloadUri);
+        } catch (Exception e) {
+            logger.error("[STEP 2 - ERROR] Failed to initiate contact export. Message: {}", e.getMessage(), e);
+            logger.info("=== [SYNC ABORTED] Cannot proceed without download URI ===");
+            return;
+        }
+
+        // Step 3: Wait
+        try {
+            logger.info("[STEP 3 🔄] Waiting 10 seconds to allow export file to be ready... please wait ⏳");
+            Thread.sleep(10000); // Consider externalizing wait duration to a config property
+            logger.info("[SUCCESS ✅] Wait completed.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("[STEP 3 - INTERRUPTED] Thread was interrupted during wait. Message: {}", e.getMessage(), e);
+            logger.info("=== [SYNC ABORTED] Interrupted while waiting ===");
+            return;}
+
+        // Step 4: Download CSV
+        try {
+            logger.info("[STEP 4 🔄] Attempting to download exported CSV content... please wait ⏳");
+            // Try reading the export data (CSV content)
+            csvContent = readExportData(downloadUri, accessToken);
+            if (csvContent == null || csvContent.trim().isEmpty() || csvContent.trim().startsWith("<!DOCTYPE html>")) {
+                // Handle the case when the CSV content is invalid
+                if (csvContent != null && csvContent.trim().startsWith("<!DOCTYPE html>"))
+                {logger.error("[STEP 4 - ERROR] Received HTML instead of CSV from URI: {}", downloadUri);}
+                else {logger.error("[STEP 4 - ERROR] CSV content is null or empty. Export might have failed.");}
+                logger.info("=== [SYNC ABORTED] Cannot proceed without valid CSV content ===");
+                return;}
+            // Success case: Valid CSV content
+            logger.info("[SUCCESS ✅] CSV content successfully downloaded from URI: {}", downloadUri);}
+        catch (Exception e) {
+            // Handle errors during the CSV download process
+            logger.error("[STEP 4 - ERROR] Failed to download CSV content. Message: {}", e.getMessage(), e);
+            logger.info("=== [SYNC ABORTED] Cannot proceed without valid CSV ===");}
+        // Step 5: Process and Save CSV
+        try {
+            logger.info("[STEP 5 🔄] Starting CSV sync...  please wait ⏳");
+            processAndSaveCsv(csvContent);
+            logger.info("[STEP 5 - SUCCESS ✅] Contacts successfully processed and saved from CSV.");
+        } catch (Exception e) {
+            logger.error("[STEP 5 - ERROR] Failed to process and save contacts from CSV. Message: {}", e.getMessage(), e);
+            logger.error("[SYNC FAILED] Contacts not updated.");
+        }
+
+        logger.info("=== [SYNC COMPLETE] Genesys Cloud contact synchronization completed successfully ===");
+        logger.info("************Finished First Iteration of Genesys Cloud **************");
+    }
+    // دالة لجلب الـ Access Token من  step 1 Genesys Cloud
     private String getAccessToken() {
         String authUrl = String.format("https://login.%s/oauth/token", region);
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
@@ -90,7 +148,6 @@ public class GenesysService {
             return retry(3, 2000, () -> {
                 try {
                     String tokenResponse = restTemplate.postForObject(authUrl, requestEntity, String.class);
-
                     ObjectMapper mapper = new ObjectMapper();
                     JsonNode root = mapper.readTree(tokenResponse);
                     String token = root.path("access_token").asText();
@@ -98,19 +155,175 @@ public class GenesysService {
                     if (token == null || token.isEmpty()) {
                         throw new RuntimeException("Access token not found in response");
                     }
-
                     return token;
                 } catch (HttpClientErrorException e) {
-                    logger.error("Error getting access token: " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
+                    logger.error("🔴 [getAccessToken] HTTP error while requesting token: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
                     throw new RuntimeException("Failed to get access token: " + e.getResponseBodyAsString(), e);
+                } catch (Exception e) {
+                    logger.error("🔴 [getAccessToken] Unexpected error while requesting token: {}", e.getMessage(), e);
+                    throw e;
                 }
             });
         } catch (Exception e) {
-            logger.error("🚫 Failed to retrieve access token after retries: " + e.getMessage());
+            logger.error("🚫 [getAccessToken] Final failure after retries: {}", e.getMessage(), e);
             throw new RuntimeException("Access token retrieval failed after retries.", e);
         }
     }
+    // step 2 Genesys Cloud sync data using token
+    private String initiateContactExport(String token) {
+    String exportUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/export", region, "bdba8620-ccff-413b-a0ea-4c609601c4e7");
+    HttpHeaders headers = new HttpHeaders();
+    headers.setBearerAuth(token);
+    headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+    HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+    try {
+        return retry(3, 2000, () -> {
+            try {   ResponseEntity<String> response = restTemplate.exchange(exportUrl, HttpMethod.GET, requestEntity, String.class);
+                String exportResponse = response.getBody();
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode root = mapper.readTree(exportResponse);
+                JsonNode downloadUriNode = root.path("uri");
+                if (downloadUriNode.isMissingNode() || downloadUriNode.isNull()) {
+                    throw new RuntimeException("⚠️ Download URI not found in response: " + exportResponse);}
+                return downloadUriNode.asText();
+            } catch (HttpClientErrorException e) {
+                logger.error("🚫 HTTP error during contact export: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+                throw new RuntimeException("Export HTTP failure: " + e.getResponseBodyAsString(), e);}
+            catch (Exception e) {
+                logger.error("❌ Export failed after retries: {}", e.getMessage());
+                throw new RuntimeException("Export step permanently failed", e);}});}
+    catch (Exception e) {
+        logger.error("🚫 Failed to initiate contact export after retries: " + e.getMessage());
+        throw new RuntimeException("Contact export failed after retries.", e);}}
+    // step 3  Waiting 10 seconds to allow export file to be ready
+    // step 4  download exported CSV content
+    private String readExportData(String downloadUri, String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
 
+        try {
+            logger.info("Attempting to fetch content from the download link: {}", downloadUri);
+
+            // Fetch initial response from the provided download URI
+            ResponseEntity<String> initialResponse = restTemplate.exchange(downloadUri, HttpMethod.GET, requestEntity, String.class);
+            String content = initialResponse.getBody();
+
+            if (content != null && content.trim().startsWith("<!DOCTYPE html>")) {
+                // Case: HTML content instead of CSV
+                logger.error("[STEP 1 - ERROR] HTML content received from URI: {}", downloadUri);
+                logger.info("[STEP 2] Attempting to extract the direct CSV link from HTML...");
+                String directCsvLink = extractDirectCsvLink(content);
+
+                if (directCsvLink != null) {
+                    logger.info("[STEP 3] Direct CSV link found: {}. Attempting to download from this link...", directCsvLink);
+                    ResponseEntity<String> csvResponse = restTemplate.exchange(directCsvLink, HttpMethod.GET, requestEntity, String.class);
+                    return csvResponse.getBody();
+                } else {
+                    logger.error("[STEP 2 - ERROR] Unable to extract CSV link from HTML content.");
+                    return content;
+                }
+            } else {
+                // Case: CSV content received directly
+                return content;
+            }
+        } catch (HttpClientErrorException e) {
+            // Handle HTTP client errors
+            logger.error("[ERROR] HTTP error while fetching data from {}: {} - {}", downloadUri, e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to fetch data: " + e.getResponseBodyAsString(), e);
+        } catch (Exception e) {
+            // Handle unexpected errors
+            logger.error("[ERROR] Unexpected error while fetching data from {}: {}", downloadUri, e.getMessage());
+            throw new RuntimeException("Failed to fetch data.", e);
+        }
+    }
+    //Method used in step 4 to extract uri
+    private String extractDirectCsvLink(String htmlContent) {
+        Pattern pattern = Pattern.compile("href=\"(https?://[^\"]+\\.csv)\"|url='(https?://[^']+\\.csv)'", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(htmlContent);
+        if (matcher.find()) {
+            if (matcher.group(1) != null) {
+                return matcher.group(1);
+            } else if (matcher.group(2) != null) {
+                return matcher.group(2);}}
+        Pattern metaRefreshPattern = Pattern.compile("<meta\\s+http-equiv=['\"]refresh['\"]\\s+content=['\"]\\d+;\\s*url=(https?://[^'\"]+\\.csv)['\"]", Pattern.CASE_INSENSITIVE);
+        Matcher metaRefreshMatcher = metaRefreshPattern.matcher(htmlContent);
+        if (metaRefreshMatcher.find()) {
+            return metaRefreshMatcher.group(1);}
+        logger.warn("No direct CSV link found in the HTML content. " +
+                "Will attempt to download from the original URI, but it may still be HTML. " +
+                "Content sample: {}", htmlContent.substring(0, Math.min(htmlContent.length(), 500)));
+        return null;}
+    // step 5 CSV sync
+    private void processAndSaveCsv(String csvContent) {
+        int recordsProcessed = 0;
+        int recordsUpdated = 0;
+        int recordsInserted = 0;
+
+        try {
+            CSVFormat csvFormat = CSVFormat.DEFAULT
+                    .builder()
+                    .setHeader()
+                    .setSkipHeaderRecord(true)
+                    .setIgnoreHeaderCase(true)
+                    .setTrim(true)
+                    .setQuote('"')
+                    .build();
+
+            try (CSVParser csvParser = new CSVParser(new StringReader(csvContent), csvFormat)) {
+                for (CSVRecord csvRecord : csvParser) {
+                    recordsProcessed++;
+                    // Log raw CSV row data
+                    String phone = csvRecord.get("phone1");
+                    String lastAttemptStr = csvRecord.get("CallRecordLastAttempt-phone1");
+                    String lastResult = csvRecord.get("CallRecordLastResult-phone1");
+                    String conversationId = csvRecord.get("conversationId");
+                    String orderId = csvRecord.get("orderId");
+                    String contactCallable=csvRecord.get("contactCallable");
+                    if (phone == null || phone.trim().isEmpty()) {
+                        logger.warn("[CSV ROW SKIPPED] Missing phone number at row {}: {}", recordsProcessed, csvRecord.toMap());
+                        continue;}
+                    if ("OUTBOUND-CONTACT-INVALID-SKILL-SKIPPED".equalsIgnoreCase(lastResult) || "ININ-WRAP-UP-TIMEOUT".equalsIgnoreCase(lastResult)) {
+                        contactCallable = "0";
+                    }
+                    LocalDateTime parsedLastAttempt = null;
+                    if (lastAttemptStr != null && !lastAttemptStr.trim().isEmpty()) {
+                        try {
+                            parsedLastAttempt = LocalDateTime.parse(lastAttemptStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+                        } catch (DateTimeParseException e) {
+                            logger.warn("[CSV PARSE] Invalid date format at row {} for phone {}: '{}'. Setting as null.",
+                                    recordsProcessed, phone, lastAttemptStr);}}
+                    logger.info("[CSV DATA] phone={}, lastAttempt={}, lastResult={}, conversationId={}, orderId={}",
+                            phone, parsedLastAttempt, lastResult, conversationId, orderId);
+
+                    Optional<Contact> existingContactOptional = contactRepository.findByPhoneAndLastAttempt(phone, parsedLastAttempt);
+                    if (existingContactOptional.isPresent()) {
+
+                        logger.info("[CSV SKIP] Contact already exists: Phone={}, OrderId={}. No need to insert.", phone, orderId);
+
+
+
+                    } else {
+
+
+                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId,contactCallable);
+                        contactRepository.save(newContact);
+                        recordsInserted++;
+                        logger.info("[CSV INSERT] Inserted new contact: Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
+                                newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(), newContact.getConversationId(), newContact.getOrderId());
+                    }}}
+
+            logger.info("[CSV SYNC COMPLETED] Processed: {}, Inserted: {}", recordsProcessed, recordsInserted);
+        } catch (IOException e) {
+            logger.error("[CSV ERROR] Failed to read CSV content: {}", e.getMessage(), e);
+            throw new RuntimeException("CSV read failed", e);
+        } catch (Exception e) {
+            logger.error("[CSV ERROR] Unexpected error during CSV processing: {}", e.getMessage(), e);
+            throw e; // rethrow to catch outside
+        }
+    }
+
+//******************************* End of First iteration ********************************************************//
 
 
     public ConversationDetailsResponse fetchConversationDetails(String conversationId) {
@@ -138,6 +351,7 @@ public class GenesysService {
                         ConversationDetailsResponse.class
                 );
 
+
                 if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                     logger.info("✅ Successfully fetched call details for ID: " + conversationId);
                     return response.getBody();
@@ -152,205 +366,13 @@ public class GenesysService {
     }
 
 
-    // دالة لبدء عملية الـ Export لـ Contact List معينة
-    private String initiateContactExport(String token) {
-        String exportUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/export", region, "bdba8620-ccff-413b-a0ea-4c609601c4e7");
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token);
-        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
-
-        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-        try {
-            return retry(3, 2000, () -> {
-                try {
-                    ResponseEntity<String> response = restTemplate.exchange(exportUrl, HttpMethod.GET, requestEntity, String.class);
-                    String exportResponse = response.getBody();
-
-                    ObjectMapper mapper = new ObjectMapper();
-                    JsonNode root = mapper.readTree(exportResponse);
-                    JsonNode downloadUriNode = root.path("uri");
-
-                    if (downloadUriNode.isMissingNode() || downloadUriNode.isNull()) {
-                        throw new RuntimeException("Download URI not found in export response: " + exportResponse);
-                    }
-                    return downloadUriNode.asText();
-
-                } catch (HttpClientErrorException e) {
-                    logger.error("Error initiating contact export: " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-                    throw new RuntimeException("Failed to initiate export: " + e.getResponseBodyAsString(), e);
-                }
-            });
-        } catch (Exception e) {
-            logger.error("🚫 Failed to initiate contact export after retries: " + e.getMessage());
-            throw new RuntimeException("Contact export failed after retries.", e);
-        }
-    }
-
-    // دالة لقراءة بيانات الـ CSV من الـ Download URI
-    private String readExportData(String downloadUri, String token) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token);
-
-        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-        try {
-            logger.info("Attempting to fetch content from the download link: " + downloadUri);
-            ResponseEntity<String> initialResponse = restTemplate.exchange(downloadUri, HttpMethod.GET, requestEntity, String.class);
-            String content = initialResponse.getBody();
-
-            if (content != null && content.trim().startsWith("<!DOCTYPE html>")) {
-                logger.info("HTML content received, attempting to extract the direct CSV link...");
-                String directCsvLink = extractDirectCsvLink(content);
-
-                if (directCsvLink != null) {
-                    logger.info("Direct CSV link extracted: " + directCsvLink + ". Attempting to download from this link...");
-                    ResponseEntity<String> csvResponse = restTemplate.exchange(directCsvLink, HttpMethod.GET, requestEntity, String.class);
-                    return csvResponse.getBody();
-                } else {
-                    logger.error("Failed to extract a direct CSV link from the HTML. The content is still HTML.");
-                    return content;
-                }
-            } else {
-                logger.info("Received content that appears to be CSV directly from the original URI.");
-                return content;
-            }
-
-        } catch (HttpClientErrorException e) {
-            logger.error("Error fetching data from " + downloadUri + ": " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-            throw new RuntimeException("Failed to fetch data: " + e.getResponseBodyAsString(), e);
-        } catch (Exception e) {
-            logger.error("Unexpected error while fetching data from " + downloadUri + ": " + e.getMessage());
-            e.printStackTrace();
-            throw new RuntimeException("Failed to fetch data.", e);
-        }
-    }
-
-    // دالة رئيسية لعملية المزامنة (هتشتغل عن طريق الـ Scheduler)
-    public void syncContactsFromGenesysApi() {
-        logger.info("--- Starting Genesys Cloud data synchronization ---");
-
-        String accessToken = null;
-        try {
-            accessToken = getAccessToken();
-            logger.info("Access Token retrieved successfully.");
-
-            String downloadUri = initiateContactExport(accessToken);
-            logger.info("Contacts export started successfully. Download link: {}", downloadUri);
-
-            logger.info("Waiting for 10 seconds for the export file to be ready...");
-            Thread.sleep(10000); // Optional: adjust time if needed
-
-            String csvContent = readExportData(downloadUri, accessToken);
-
-            if (csvContent == null || csvContent.trim().isEmpty() || csvContent.trim().startsWith("<!DOCTYPE html>")) {
-                if (csvContent != null && csvContent.trim().startsWith("<!DOCTYPE html>")) {
-                    logger.error("Failed to retrieve CSV content. Received HTML even after waiting. Check Genesys API behavior or increase wait time.");
-                } else {
-                    logger.error("No CSV content was retrieved or content is empty; cannot proceed with data storage.");
-                }
-                return;
-            }
-
-            logger.info("CSV content retrieved successfully. Processing...");
-            processAndSaveCsv(csvContent);
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("Thread was interrupted during wait: {}", e.getMessage(), e);
-        } catch (Exception e) {
-            logger.error("Failed to synchronize Genesys Cloud data: {}", e.getMessage(), e);
-        }
-
-        logger.info("--- Finished synchronizing Genesys Cloud data ---");
-    }
 
 
-    private void processAndSaveCsv(String csvContent) {
-        int recordsProcessed = 0;
-        int recordsUpdated = 0;
-        int recordsInserted = 0;
 
-        try {
-            CSVFormat csvFormat = CSVFormat.DEFAULT
-                    .builder()
-                    .setHeader()
-                    .setSkipHeaderRecord(true)
-                    .setIgnoreHeaderCase(true)
-                    .setTrim(true)
-                    .setQuote('"')
-                    .build();
 
-            try (CSVParser csvParser = new CSVParser(new StringReader(csvContent), csvFormat)) {
 
-                for (CSVRecord csvRecord : csvParser) {
-                    recordsProcessed++;
-                    String phone = csvRecord.get("phone1");
-                    String lastAttemptStr = csvRecord.get("CallRecordLastAttempt-phone1");
-                    String lastResult = csvRecord.get("CallRecordLastResult-phone1");
-                    String conversationId = csvRecord.get("conversationId");
-                    String orderId = csvRecord.get("orderId");
 
-                    if (phone == null || phone.trim().isEmpty()) {
-                        logger.warn("Skipping row due to missing phone number: {}", csvRecord.toMap());
-                        continue;
-                    }
 
-                    LocalDateTime parsedLastAttempt = null;
-                    if (lastAttemptStr != null && !lastAttemptStr.trim().isEmpty()) {
-                        try {
-                            parsedLastAttempt = LocalDateTime.parse(lastAttemptStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-                        } catch (DateTimeParseException e) {
-                            logger.warn("Failed to parse lastAttempt: '{}' for phone: {}. Stored as null.", lastAttemptStr, phone);
-                            parsedLastAttempt = null;
-                        }
-                    }
-
-                    Optional<Contact> existingContactOptional = contactRepository.findByPhoneAndLastAttempt(phone, parsedLastAttempt);
-
-                    if (existingContactOptional.isPresent()) {
-                        Contact existingContact = existingContactOptional.get();
-                        boolean updated = false;
-
-                        if (lastResult != null && !lastResult.equals(existingContact.getLastResult())) {
-                            existingContact.setLastResult(lastResult);
-                            updated = true;
-                        }
-
-                        if (conversationId != null && !conversationId.equals(existingContact.getConversationId())) {
-                            existingContact.setConversationId(conversationId);
-                            updated = true;
-                        }
-
-                        if (updated) {
-                            contactRepository.save(existingContact);
-                            recordsUpdated++;
-                            logger.info("Updated existing record (from CSV): Phone: {}, Last Attempt: {}, Last Result: {}, Conversation ID: {}",
-                                    existingContact.getPhone(), existingContact.getLastAttempt(), existingContact.getLastResult(), existingContact.getConversationId());
-                        }
-
-                    } else {
-                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId);
-                        contactRepository.save(newContact);
-                        recordsInserted++;
-                        logger.info("Inserted new record (from CSV): Phone: {}, Last Attempt: {}, Last Result: {}, Conversation ID: {}, Order ID: {}",
-                                newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(), newContact.getConversationId(), newContact.getOrderId());
-                    }
-                }
-
-                logger.info("Finished processing {} records from the CSV.", recordsProcessed);
-                logger.info("Updated {} records in the 'contact_lists' table (from CSV).", recordsUpdated);
-                logger.info("Inserted {} new records into the 'contact_lists' table (from CSV).", recordsInserted);
-            }
-
-        } catch (IOException e) {
-            logger.error("Error reading CSV content: {}", e.getMessage(), e);
-        } catch (Exception e) {
-            logger.error("An error occurred while processing and saving the CSV: {}", e.getMessage(), e);
-        }
-    }
-// <<<<<<<<<<<<<<< نهاية الميثود المعدلة بالكامل >>>>>>>>>>>>>>>
 
 
     // <<<<<<<<<<<<<<< ميثود جديدة: جلب اسم الـ Agent من SCIM API >>>>>>>>>>>>>>>
@@ -402,34 +424,78 @@ public class GenesysService {
 
 
     public void updateContactsWithConversationDetails() {
-        logger.info("--- Starting to update Contacts with call details from Genesys API ---");
+        logger.info("************ Start Second Iteration of Genesys Cloud **************");
+        logger.info("=== [SYNC START] Updating contacts with call details from Genesys Cloud ===");
 
-        List<Contact> contactsToUpdate = contactRepository.findByConversationIdIsNotNullAndConversationStartTimeIsNull();
-        logger.info("Found {} contact records that require call details.", contactsToUpdate.size());
+        List<Contact> contactsToUpdate = null;
+
+        // STEP 1: Fetch contacts that need call detail updates
+        logger.info("[STEP 1] Fetching contacts with valid conversationId and missing conversationStartTime... Please wait...");
+        try {
+            contactsToUpdate = contactRepository.findWithValidConversationIdAndMissingStartTime();
+            logger.info("📊 Found {} contact records that require call details update.", contactsToUpdate.size());
+        } catch (Exception e) {
+            logger.error("❌ Failed to fetch contacts from repository. Error: {}", e.getMessage(), e);
+            return;
+        }
 
         int updatedCount = 0;
+        int failedCount = 0;
 
         for (Contact contact : contactsToUpdate) {
-            if (contact.getConversationId() == null || contact.getConversationId().isEmpty()) {
-                logger.warn("Skipping contact without Conversation ID: {}", contact.getPhone());
+            String phone = contact.getPhone();
+            String conversationId = contact.getConversationId();
+
+            // STEP 2: Validate conversationId
+            logger.info("[STEP 2] Validating conversation ID for phone: {}... Please wait...", phone);
+            try {
+                if (conversationId == null || conversationId.isEmpty()) {
+                    logger.warn("⚠️ Skipping contact without Conversation ID | Phone: {}", phone);
+                    continue;
+                }
+            } catch (Exception e) {
+                logger.error("❌ Error during Conversation ID validation | Phone: {} | Error: {}", phone, e.getMessage(), e);
+                failedCount++;
                 continue;
             }
 
-            ConversationDetailsResponse details = fetchConversationDetails(contact.getConversationId());
-            if (details != null) {
+            ConversationDetailsResponse details = null;
+
+            // STEP 3: Fetch conversation details from Genesys
+            logger.info("[STEP 3] Fetching conversation details for conversationId: {}... Please wait...", conversationId);
+            try {
+                details = fetchConversationDetails(conversationId);
+                if (details == null) {
+                    logger.error("❌ Call details not found | Phone: {} | Conversation ID: {}", phone, conversationId);
+                    failedCount++;
+                    continue;
+                }
+            } catch (Exception e) {
+                logger.error("❌ Exception while fetching call details | Phone: {} | Conversation ID: {} | Error: {}", phone, conversationId, e.getMessage(), e);
+                failedCount++;
+                continue;
+            }
+
+            // STEP 4: Set call times and duration
+            logger.info("[STEP 4] Setting conversation start/end time and calculating duration... Please wait...");
+            try {
                 contact.setConversationStartTime(details.getConversationStart());
                 contact.setConversationEndTime(details.getConversationEnd());
-
                 if (contact.getConversationStartTime() != null && contact.getConversationEndTime() != null) {
                     Duration duration = Duration.between(contact.getConversationStartTime(), contact.getConversationEndTime());
                     contact.setCallDurationSeconds(duration.getSeconds());
                 } else {
                     contact.setCallDurationSeconds(null);
                 }
+            } catch (Exception e) {
+                logger.error("❌ Error setting call times or duration | Phone: {} | Error: {}", phone, e.getMessage(), e);
+            }
 
-                String selectedAgentId = null;
-                String wrapUpCode = null;
-
+            // STEP 5: Extract agent ID and wrap-up code
+            logger.info("[STEP 5] Extracting agent ID and wrap-up code from conversation details... Please wait...");
+            String selectedAgentId = null;
+            String wrapUpCode = null;
+            try {
                 for (Participant participant : details.getParticipants()) {
                     if ("agent".equalsIgnoreCase(participant.getPurpose()) && participant.getUserId() != null) {
                         selectedAgentId = participant.getUserId();
@@ -445,76 +511,89 @@ public class GenesysService {
                                     }
                                 }
                             }
-                            if (wrapUpCode != null) {
-                                break;
-                            }
+                            if (wrapUpCode != null) break;
                         }
                     }
 
-                    if (selectedAgentId != null && wrapUpCode != null) {
-                        break;
-                    }
+                    if (selectedAgentId != null && wrapUpCode != null) break;
                 }
 
                 contact.setSelectedAgentId(selectedAgentId);
                 contact.setWrapUpCode(wrapUpCode);
+            } catch (Exception e) {
+                logger.error("❌ Error extracting agent or wrap-up code | Phone: {} | Error: {}", phone, e.getMessage(), e);
+            }
 
+            // STEP 6: Fetch and set agent name
+            logger.info("[STEP 6] Fetching and setting agent name for Agent ID: {}... Please wait...", selectedAgentId);
+            try {
                 if (selectedAgentId != null && !selectedAgentId.isEmpty()) {
-                    String agentName = fetchAgentDisplayName(selectedAgentId);
-                    contact.setAgentName(agentName);
+                    try {
+                        String agentName = fetchAgentDisplayName(selectedAgentId);
+                        contact.setAgentName(agentName);
+                    } catch (Exception e) {
+                        logger.warn("⚠️ Failed to fetch agent name | Agent ID: {} | Phone: {} | Error: {}", selectedAgentId, phone, e.getMessage());
+                        contact.setAgentName(null);
+                    }
                 } else {
                     contact.setAgentName(null);
                 }
+            } catch (Exception e) {
+                logger.error("❌ Error while setting agent name | Phone: {} | Error: {}", phone, e.getMessage(), e);
+            }
 
+            // STEP 7: Save updated contact
+            logger.info("[STEP 7] Saving updated contact data for phone: {}... Please wait...", phone);
+            try {
                 contactRepository.save(contact);
                 updatedCount++;
-
-                logger.info("✅ Updated Contact: {} | Conversation ID: {} | Start: {} | End: {} | Duration: {}s | Agent ID: {} | Agent Name: {} | WrapUpCode: {}",
-                        contact.getPhone(),
-                        contact.getConversationId(),
-                        contact.getConversationStartTime(),
-                        contact.getConversationEndTime(),
-                        contact.getCallDurationSeconds(),
-                        selectedAgentId,
-                        contact.getAgentName(),
-                        wrapUpCode
-                );
-            } else {
-                logger.error("❌ Failed to fetch call details for Contact: {} (Conversation ID: {})",
-                        contact.getPhone(), contact.getConversationId());
+                logger.info("✅ Contact updated successfully:");
+                logger.info("   • Phone: {}", phone);
+                logger.info("   • Conversation ID: {}", conversationId);
+                logger.info("   • Start Time: {}", contact.getConversationStartTime());
+                logger.info("   • End Time: {}", contact.getConversationEndTime());
+                logger.info("   • Duration (s): {}", contact.getCallDurationSeconds());
+                logger.info("   • Agent ID: {}", selectedAgentId);
+                logger.info("   • Agent Name: {}", contact.getAgentName());
+                logger.info("   • Wrap-Up Code: {}", wrapUpCode);
+            } catch (Exception e) {
+                logger.error("❌ Failed to save contact | Phone: {} | Error: {}", phone, e.getMessage(), e);
+                failedCount++;
             }
         }
 
-        logger.info("--- Finished updating Contacts with call details. {} records updated. ---", updatedCount);
+        // STEP 8: Log final sync summary
+
+        try {
+            logger.info("=== [SYNC COMPLETE] ===");
+            logger.info("✅ Total Contacts Updated: {}", updatedCount);
+            logger.info("❌ Total Contacts Failed: {}", failedCount);
+        } catch (Exception e) {
+            logger.error("❌ Error while logging final summary | Error: {}", e.getMessage(), e);
+        }
     }
 
 
-    private String extractDirectCsvLink(String htmlContent) {
-        Pattern pattern = Pattern.compile("href=\"(https?://[^\"]+\\.csv)\"|url='(https?://[^']+\\.csv)'", Pattern.CASE_INSENSITIVE);
-        Matcher matcher = pattern.matcher(htmlContent);
 
-        if (matcher.find()) {
-            if (matcher.group(1) != null) {
-                return matcher.group(1);
-            } else if (matcher.group(2) != null) {
-                return matcher.group(2);
-            }
-        }
 
-        Pattern metaRefreshPattern = Pattern.compile("<meta\\s+http-equiv=['\"]refresh['\"]\\s+content=['\"]\\d+;\\s*url=(https?://[^'\"]+\\.csv)['\"]", Pattern.CASE_INSENSITIVE);
-        Matcher metaRefreshMatcher = metaRefreshPattern.matcher(htmlContent);
-        if (metaRefreshMatcher.find()) {
-            return metaRefreshMatcher.group(1);
-        }
 
-        logger.warn("No direct CSV link found in the HTML content. " +
-                "Will attempt to download from the original URI, but it may still be HTML. " +
-                "Content sample: {}", htmlContent.substring(0, Math.min(htmlContent.length(), 500)));
 
-        return null;
-    }
+
+
+
+
+
+
+
+
+
 
     public List<Contact> getContacts() {
         return contactRepository.findAll(); // أو فلترة حسب شرط معين
     }
+
+
+
+
+
 }

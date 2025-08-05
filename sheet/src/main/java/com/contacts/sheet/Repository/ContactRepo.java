@@ -18,7 +18,12 @@ public interface ContactRepo extends JpaRepository<Contact, Integer> {
 
     List<Contact> findByCreatedAtBetween(LocalDateTime startOfDay, LocalDateTime endOfDay);
 
-    List<Contact> findByConversationIdIsNotNullAndConversationStartTimeIsNull();
-//     @Query("SELECT c FROM Contact c WHERE FUNCTION('CONVERT', DATE, c.createdAt) = :date")
+    @Query("SELECT c FROM Contact c " +
+            "WHERE c.conversationId IS NOT NULL AND c.conversationId <> '' " +
+            "AND c.conversationStartTime IS NULL")
+    List<Contact> findWithValidConversationIdAndMissingStartTime();
+
+    //     @Query("SELECT c FROM Contact c WHERE FUNCTION('CONVERT', DATE, c.createdAt) = :date")
 //     List<Contact> findByCreatedAtDate(@Param("date") LocalDate date);
+Optional<Contact> findByConversationId(String conversationId);
 }

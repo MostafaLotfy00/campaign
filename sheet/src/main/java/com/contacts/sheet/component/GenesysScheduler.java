@@ -16,30 +16,34 @@ public class GenesysScheduler {
     private final GenesysService genesysService;
     private final TaggerService taggerService;
     private static final Logger logger = LoggerFactory.getLogger(GenesysScheduler.class);
+
+    //constructor
     public GenesysScheduler(GenesysService genesysService, TaggerService taggerService) {
         this.genesysService = genesysService;
-        this.taggerService = taggerService;
-    }
-
-    @Scheduled(fixedRate = 600000)
-    public void runGenesysCsvSyncJob() {
-        logger.info("--- Scheduler: Starting Genesys data sync task from CSV ---");
+        this.taggerService = taggerService;}
+//run Genesyspiplineflow
+    @Scheduled(fixedRate = 30000)
+    public void runFullGenesysPipelineJob() {
+        logger.info("🚀 Scheduler:  Starting full Genesys sync and processing pipeline...");
         genesysService.syncContactsFromGenesysApi();
-        logger.info("--- Scheduler: Finished executing Genesys data sync task from CSV ---");
-    }
-
-    @Scheduled(fixedRate = 600000, initialDelay = 60000)
-    public void runConversationDetailsUpdateJob() {
-        logger.info("--- Scheduler: Starting call details update task ---");
         genesysService.updateContactsWithConversationDetails();
-        logger.info("--- Scheduler: Finished running call details update task ---");
+
+
+
+
+        // Step 3: Send contacts to Tagger
+        try {
+            logger.info("📤 Step 3: Sending contacts to Tagger...");
+            List<Contact> contacts = genesysService.getContacts();
+            taggerService.sendContactsToTagger(contacts);
+            logger.info("✅ Step 3: Contacts successfully sent to Tagger.");
+        } catch (Exception e) {
+            logger.error("❌ Step 3 failed: {}", e.getMessage());
+        }
+
+        logger.info("🏁 Scheduler: Finished full Genesys pipeline execution.");
     }
 
-    @Scheduled(fixedRate = 600000, initialDelay = 120000)
-    public void runSendToTaggerJob() {
-        logger.info("--- Scheduler: Starting data sending task for Tagger ---");
-        List<Contact> contacts = genesysService.getContacts(); // تأكد أن الميثود دي موجودة
-        taggerService.sendContactsToTagger(contacts);
-        logger.info("--- Scheduler: Finished data sending task for Tagger ---");
-    }
+
+
 }

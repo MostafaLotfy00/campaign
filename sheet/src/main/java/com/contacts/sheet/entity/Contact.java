@@ -71,6 +71,9 @@ public class Contact {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "contact_callable")
+    private String contactCallable;
+
     // --- Custom Setters for lastResult, conversationId, selectedAgentId, agentName ---
 
     public void setLastResult(String lastResult) {
@@ -132,7 +135,7 @@ public class Contact {
         // The nullification logic will be applied when setLastResult is called.
     }
 
-    public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId,  String orderId) {
+    public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId,  String orderId,String contactCallable) {
         this.phone = phone;
         this.lastAttempt = lastAttempt;
         this.orderId = orderId; // تخزين orderId
@@ -140,7 +143,7 @@ public class Contact {
         setConversationId(conversationId); // Use the custom setter
         this.createdAt = LocalDateTime.now();
         this.status = "not sent"; // <<<<< تعيين القيمة الافتراضية هنا
-
+this.contactCallable = contactCallable;
         // The nullification logic will be applied when setLastResult and setConversationId are called.
     }
 
