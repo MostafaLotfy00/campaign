@@ -74,6 +74,9 @@ public class Contact {
     @Column(name = "contact_callable")
     private String contactCallable;
 
+    @Column(name = "callback_scheduled_time")
+    private LocalDateTime callbackScheduledTime;
+
     // --- Custom Setters for lastResult, conversationId, selectedAgentId, agentName ---
 
     public void setLastResult(String lastResult) {

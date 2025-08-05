@@ -171,7 +171,7 @@ public class GenesysService {
     }
     // step 2 Genesys Cloud sync data using token
     private String initiateContactExport(String token) {
-    String exportUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/export", region, "bdba8620-ccff-413b-a0ea-4c609601c4e7");
+    String exportUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/export", region, "6e3088a5-3218-4a9d-8fc0-a9f20348f110");
     HttpHeaders headers = new HttpHeaders();
     headers.setBearerAuth(token);
     headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
@@ -354,6 +354,7 @@ public class GenesysService {
 
                 if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                     logger.info("✅ Successfully fetched call details for ID: " + conversationId);
+                    System.out.println("Response is"+ response.getBody());
                     return response.getBody();
                 } else {
                     throw new RuntimeException("❌ Failed to fetch call details. Status: " + response.getStatusCode());
@@ -481,6 +482,7 @@ public class GenesysService {
             try {
                 contact.setConversationStartTime(details.getConversationStart());
                 contact.setConversationEndTime(details.getConversationEnd());
+                System.out.println(details.getConversationEnd());
                 if (contact.getConversationStartTime() != null && contact.getConversationEndTime() != null) {
                     Duration duration = Duration.between(contact.getConversationStartTime(), contact.getConversationEndTime());
                     contact.setCallDurationSeconds(duration.getSeconds());
@@ -524,8 +526,34 @@ public class GenesysService {
                 logger.error("❌ Error extracting agent or wrap-up code | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
 
-            // STEP 6: Fetch and set agent name
-            logger.info("[STEP 6] Fetching and setting agent name for Agent ID: {}... Please wait...", selectedAgentId);
+            // <<<<<<<<<<<<<<< هنا التعديل اللي طلبته >>>>>>>>>>>>>>>
+            // STEP 6: Extract Callback Scheduled Time
+            logger.info("[STEP 6] Extracting callback scheduled time if last result is 'Call Back'...");
+            try {
+                // بنشيك على الـ lastResult الأول
+                if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
+                    for (Participant participant : details.getParticipants()) {
+                        if (participant.getSessions() != null) {
+                            for (Session session : participant.getSessions()) {
+                                // بنبحث عن الـ session اللي mediaType بتاعها "callback"
+                                if ("callback".equalsIgnoreCase(session.getMediaType())) {
+                                    contact.setCallbackScheduledTime(session.getCallbackScheduledTime());
+                                    logger.info("✅ Found and set callbackScheduledTime: {} for conversationId: {}", contact.getCallbackScheduledTime(), conversationId);
+                                    break; // خلاص لقيناها، ممكن نخرج من الـ loop
+                                }
+                            }
+                        }
+                        if (contact.getCallbackScheduledTime() != null) {
+                            break; // خلاص لقيناها، ممكن نخرج من الـ loop
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("❌ Error extracting callbackScheduledTime | Phone: {} | Error: {}", phone, e.getMessage(), e);
+            }
+
+            // STEP 7: Fetch and set agent name
+            logger.info("[STEP 7] Fetching and setting agent name for Agent ID: {}... Please wait...", selectedAgentId);
             try {
                 if (selectedAgentId != null && !selectedAgentId.isEmpty()) {
                     try {
@@ -541,9 +569,10 @@ public class GenesysService {
             } catch (Exception e) {
                 logger.error("❌ Error while setting agent name | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
+            // <<<<<<<<<<<<<<< نهاية التعديل >>>>>>>>>>>>>>>
 
-            // STEP 7: Save updated contact
-            logger.info("[STEP 7] Saving updated contact data for phone: {}... Please wait...", phone);
+            // STEP 8: Save updated contact
+            logger.info("[STEP 8] Saving updated contact data for phone: {}... Please wait...", phone);
             try {
                 contactRepository.save(contact);
                 updatedCount++;
@@ -556,14 +585,16 @@ public class GenesysService {
                 logger.info("   • Agent ID: {}", selectedAgentId);
                 logger.info("   • Agent Name: {}", contact.getAgentName());
                 logger.info("   • Wrap-Up Code: {}", wrapUpCode);
+                // <<<<<<<<<<<<<<< هنا بنضيف الـ log الجديد >>>>>>>>>>>>>>>
+                logger.info("   • Callback Scheduled Time: {}", contact.getCallbackScheduledTime());
+                // <<<<<<<<<<<<<<< نهاية الـ log الجديد >>>>>>>>>>>>>>>
             } catch (Exception e) {
                 logger.error("❌ Failed to save contact | Phone: {} | Error: {}", phone, e.getMessage(), e);
                 failedCount++;
             }
         }
 
-        // STEP 8: Log final sync summary
-
+        // STEP 9: Log final sync summary
         try {
             logger.info("=== [SYNC COMPLETE] ===");
             logger.info("✅ Total Contacts Updated: {}", updatedCount);

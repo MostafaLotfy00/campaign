@@ -16,7 +16,7 @@ public class ConversationDetailsResponse {
 
     public ConversationDetailsResponse(LocalDateTime conversationStart, LocalDateTime conversationEnd, String originatingDirection, List<Participant> participants, String conversationId) {
         this.conversationStart = conversationStart;
-        this.conversationEnd = null;
+        this.conversationEnd = conversationEnd;
         this.originatingDirection = originatingDirection;
         this.participants = participants;
         this.conversationId = conversationId;
