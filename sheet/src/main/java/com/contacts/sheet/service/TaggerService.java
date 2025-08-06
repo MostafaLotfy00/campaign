@@ -108,25 +108,22 @@ public class TaggerService {
         Map<String, Object> callAttempt = new HashMap<>();
 
         callAttempt.put("order_id", String.valueOf(contact.getOrderId()));
-
         if (contact.getLastAttempt() != null) {
-            callAttempt.put("call_datetime", contact.getLastAttempt().atOffset(ZoneOffset.UTC).toString());
-        }
-
+            callAttempt.put("call_datetime", contact.getLastAttempt().atOffset(ZoneOffset.UTC).toString());}
         callAttempt.put("wrap_up_reason", contact.getWrapUpCode() != null ? contact.getWrapUpCode() : "No Answer");
         callAttempt.put("call_duration", (contact.getCallDurationSeconds() != null && contact.getCallDurationSeconds() > 0)
                 ? contact.getCallDurationSeconds()
                 : 0);
-        callAttempt.put("agent_id", contact.getSelectedAgentId() != null ? contact.getSelectedAgentId() : "unknown");
+        callAttempt.put("agent_id", contact.getSelectedAgentId() != null ? contact.getAgentName() : "unknown");
 
         if ("Callback".equalsIgnoreCase(contact.getLastResult())) {
             callAttempt.put("callback_requested", true);
 
             Map<String, Object> callbackDetails = new HashMap<>();
-            if (contact.getConversationStartTime() != null) {
-                callbackDetails.put("callback_time", contact.getConversationStartTime().atOffset(ZoneOffset.UTC).toString());
+            if (contact.getCallbackScheduledTime()!= null) {
+                callbackDetails.put("callback_time", contact.getCallbackScheduledTime().atOffset(ZoneOffset.UTC).toString());
             }
-            callbackDetails.put("callback_agent_id", contact.getSelectedAgentId());
+            callbackDetails.put("callback_agent_id", contact.getAgentName());
 
             callAttempt.put("callback_details", callbackDetails);
         }
