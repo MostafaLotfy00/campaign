@@ -469,34 +469,36 @@ public class GenesysService {
                 continue;
             }
 
-            // STEP 4: Set call times and duration
-            logger.info("[STEP 4] Setting conversation start/end time and calculating duration... Please wait...");
+            // STEP 4: Set call times
+            logger.info("[STEP 4] Setting conversation start/end time... Please wait...");
             try {
                 contact.setConversationStartTime(details.getConversationStart());
                 contact.setConversationEndTime(details.getConversationEnd());
                 System.out.println(details.getConversationEnd());
-                if (contact.getConversationStartTime() != null && contact.getConversationEndTime() != null) {
-                    Duration duration = Duration.between(contact.getConversationStartTime(), contact.getConversationEndTime());
-                    contact.setCallDurationSeconds(duration.getSeconds());
-                } else {
-                    contact.setCallDurationSeconds(null);
-                }
             } catch (Exception e) {
-                logger.error("❌ Error setting call times or duration | Phone: {} | Error: {}", phone, e.getMessage(), e);
+                logger.error("❌ Error setting call times | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
 
-            // STEP 5: Extract agent ID and wrap-up code
-            logger.info("[STEP 5] Extracting agent ID and wrap-up code from conversation details... Please wait...");
+            // ---
+            // التعديل يبدأ هنا
+            // ---
+
+            // STEP 5: Extract agent ID, wrap-up code, and call duration
+            logger.info("[STEP 5] Extracting agent ID, wrap-up code, and call duration from conversation details... Please wait...");
             String selectedAgentId = null;
             String wrapUpCode = null;
+            Long callDurationSeconds = null;
+
             try {
                 for (Participant participant : details.getParticipants()) {
+                    // البحث عن الـ agent
                     if ("agent".equalsIgnoreCase(participant.getPurpose()) && participant.getUserId() != null) {
                         selectedAgentId = participant.getUserId();
                     }
 
                     if (participant.getSessions() != null) {
                         for (Session session : participant.getSessions()) {
+                            // البحث عن الـ Wrap-Up Code
                             if (wrapUpCode == null && session.getSegments() != null) {
                                 for (Segment segment : session.getSegments()) {
                                     if (segment.getWrapUpCode() != null) {
@@ -505,38 +507,57 @@ public class GenesysService {
                                     }
                                 }
                             }
-                            if (wrapUpCode != null) break;
+
+                            // البحث عن الـ duration (tTalk)
+                            if (session.getMetrics() != null) {
+                                for (Metric metric : session.getMetrics()) {
+                                    // هنا بنشيك على الـ metric اللي اسمه "tTalk"
+                                    if ("tTalk".equalsIgnoreCase(metric.getName())) {
+                                        // بناخد القيمة بالمللي ثانية ونحولها لثواني
+                                        callDurationSeconds = metric.getValue() / 1000;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // لو لقينا كل البيانات، نخرج من الـ loop عشان نوفر وقت
+                            if (wrapUpCode != null && callDurationSeconds != null) break;
                         }
                     }
 
-                    if (selectedAgentId != null && wrapUpCode != null) break;
+                    // لو لقينا كل البيانات، نخرج من الـ loop
+                    if (selectedAgentId != null && wrapUpCode != null && callDurationSeconds != null) break;
                 }
 
                 contact.setSelectedAgentId(selectedAgentId);
                 contact.setWrapUpCode(wrapUpCode);
+                // تعيين القيمة الجديدة للـ duration
+                contact.setCallDurationSeconds(callDurationSeconds);
+
             } catch (Exception e) {
-                logger.error("❌ Error extracting agent or wrap-up code | Phone: {} | Error: {}", phone, e.getMessage(), e);
+                logger.error("❌ Error extracting agent, wrap-up code, or duration | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
 
-            // <<<<<<<<<<<<<<< هنا التعديل اللي طلبته >>>>>>>>>>>>>>>
+            // ---
+            // نهاية التعديل
+            // ---
+
             // STEP 6: Extract Callback Scheduled Time
             logger.info("[STEP 6] Extracting callback scheduled time if last result is 'Call Back'...");
             try {
-                // بنشيك على الـ lastResult الأول
                 if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
                     for (Participant participant : details.getParticipants()) {
                         if (participant.getSessions() != null) {
                             for (Session session : participant.getSessions()) {
-                                // بنبحث عن الـ session اللي mediaType بتاعها "callback"
                                 if ("callback".equalsIgnoreCase(session.getMediaType())) {
                                     contact.setCallbackScheduledTime(session.getCallbackScheduledTime());
                                     logger.info("✅ Found and set callbackScheduledTime: {} for conversationId: {}", contact.getCallbackScheduledTime(), conversationId);
-                                    break; // خلاص لقيناها، ممكن نخرج من الـ loop
+                                    break;
                                 }
                             }
                         }
                         if (contact.getCallbackScheduledTime() != null) {
-                            break; // خلاص لقيناها، ممكن نخرج من الـ loop
+                            break;
                         }
                     }
                 }
@@ -561,7 +582,6 @@ public class GenesysService {
             } catch (Exception e) {
                 logger.error("❌ Error while setting agent name | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
-            // <<<<<<<<<<<<<<< نهاية التعديل >>>>>>>>>>>>>>>
 
             // STEP 8: Save updated contact
             logger.info("[STEP 8] Saving updated contact data for phone: {}... Please wait...", phone);
@@ -577,9 +597,7 @@ public class GenesysService {
                 logger.info("   • Agent ID: {}", selectedAgentId);
                 logger.info("   • Agent Name: {}", contact.getAgentName());
                 logger.info("   • Wrap-Up Code: {}", wrapUpCode);
-                // <<<<<<<<<<<<<<< هنا بنضيف الـ log الجديد >>>>>>>>>>>>>>>
                 logger.info("   • Callback Scheduled Time: {}", contact.getCallbackScheduledTime());
-                // <<<<<<<<<<<<<<< نهاية الـ log الجديد >>>>>>>>>>>>>>>
             } catch (Exception e) {
                 logger.error("❌ Failed to save contact | Phone: {} | Error: {}", phone, e.getMessage(), e);
                 failedCount++;

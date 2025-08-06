@@ -16,4 +16,5 @@ public class Session {
     private List<Segment> segments;
     private String MediaType;
     private LocalDateTime CallbackScheduledTime;
+    private List<Metric> metrics;
 }
