@@ -346,6 +346,8 @@ public class GenesysService {
         }
         int y =5;
 
+
+int x =5;
         String detailsUrl = String.format("https://api.%s/api/v2/analytics/conversations/%s/details", region, conversationId);
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
