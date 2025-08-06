@@ -87,42 +87,34 @@ public class GenesysService {
             return;
         }
 
-        // Step 3: Wait
-        try {
-            logger.info("[STEP 3 🔄] Waiting 10 seconds to allow export file to be ready... please wait ⏳");
-            Thread.sleep(10000); // Consider externalizing wait duration to a config property
-            logger.info("[SUCCESS ✅] Wait completed.");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("[STEP 3 - INTERRUPTED] Thread was interrupted during wait. Message: {}", e.getMessage(), e);
-            logger.info("=== [SYNC ABORTED] Interrupted while waiting ===");
-            return;}
 
-        // Step 4: Download CSV
+
+
+        // Step 3: Download CSV
         try {
-            logger.info("[STEP 4 🔄] Attempting to download exported CSV content... please wait ⏳");
+            logger.info("[STEP 3 🔄] Attempting to download exported CSV content... please wait ⏳");
             // Try reading the export data (CSV content)
             csvContent = readExportData(downloadUri, accessToken);
             if (csvContent == null || csvContent.trim().isEmpty() || csvContent.trim().startsWith("<!DOCTYPE html>")) {
                 // Handle the case when the CSV content is invalid
                 if (csvContent != null && csvContent.trim().startsWith("<!DOCTYPE html>"))
-                {logger.error("[STEP 4 - ERROR] Received HTML instead of CSV from URI: {}", downloadUri);}
-                else {logger.error("[STEP 4 - ERROR] CSV content is null or empty. Export might have failed.");}
+                {logger.error("[STEP 3 - ERROR] Received HTML instead of CSV from URI: {}", downloadUri);}
+                else {logger.error("[STEP 3 - ERROR] CSV content is null or empty. Export might have failed.");}
                 logger.info("=== [SYNC ABORTED] Cannot proceed without valid CSV content ===");
                 return;}
             // Success case: Valid CSV content
             logger.info("[SUCCESS ✅] CSV content successfully downloaded from URI: {}", downloadUri);}
         catch (Exception e) {
             // Handle errors during the CSV download process
-            logger.error("[STEP 4 - ERROR] Failed to download CSV content. Message: {}", e.getMessage(), e);
+            logger.error("[STEP 3 - ERROR] Failed to download CSV content. Message: {}", e.getMessage(), e);
             logger.info("=== [SYNC ABORTED] Cannot proceed without valid CSV ===");}
-        // Step 5: Process and Save CSV
+        // Step 4: Process and Save CSV
         try {
-            logger.info("[STEP 5 🔄] Starting CSV sync...  please wait ⏳");
+            logger.info("[STEP 4 🔄] Starting CSV sync...  please wait ⏳");
             processAndSaveCsv(csvContent);
-            logger.info("[STEP 5 - SUCCESS ✅] Contacts successfully processed and saved from CSV.");
+            logger.info("[STEP 4 - SUCCESS ✅] Contacts successfully processed and saved from CSV.");
         } catch (Exception e) {
-            logger.error("[STEP 5 - ERROR] Failed to process and save contacts from CSV. Message: {}", e.getMessage(), e);
+            logger.error("[STEP 4 - ERROR] Failed to process and save contacts from CSV. Message: {}", e.getMessage(), e);
             logger.error("[SYNC FAILED] Contacts not updated.");
         }
 

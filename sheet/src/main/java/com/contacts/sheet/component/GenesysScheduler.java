@@ -22,7 +22,7 @@ public class GenesysScheduler {
         this.genesysService = genesysService;
         this.taggerService = taggerService;}
 //run Genesyspiplineflow
-    @Scheduled(fixedRate = 30000)
+    @Scheduled(fixedRate = 120000)
     public void runFullGenesysPipelineJob() {
         logger.info("🚀 Scheduler:  Starting full Genesys sync and processing pipeline...");
         genesysService.syncContactsFromGenesysApi();

@@ -41,11 +41,27 @@ public class TaggerService {
             return;
         }
 
+
         List<Contact> unsentContacts = contacts.stream()
                 .filter(contact -> "not sent".equalsIgnoreCase(contact.getStatus()))
+                .filter(contact -> contact.getLastAttempt() != null)
+                .filter(contact -> {
+                    if (contact.getConversationEndTime() == null) {
+                        if ("callback".equalsIgnoreCase(contact.getLastResult())) {
+                            return true;
+                        } else {
+                            // check conversationId
+                            return contact.getConversationId() == null || contact.getConversationId().isEmpty();
+                        }
+                    } else {
+                        return true;
+                    }
+                })
                 .collect(Collectors.toList());
 
+
         if (unsentContacts.isEmpty()) {
+            logger.info("[STEP 2] Sending contacts to Tagger..."+unsentContacts);
             logger.info("✅ All contacts have already been sent. Nothing to send.");
             return;
         }
@@ -63,7 +79,7 @@ public class TaggerService {
 
         try {
             String jsonPayload = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
-            logger.debug("📦 JSON Payload:\n{}", jsonPayload);
+            logger.info("📦 JSON Payload:\n{}", jsonPayload);
 
             ResponseEntity<String> response = retry(3, 2000, () -> {
                 HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
@@ -103,7 +119,7 @@ public class TaggerService {
                 : 0);
         callAttempt.put("agent_id", contact.getSelectedAgentId() != null ? contact.getSelectedAgentId() : "unknown");
 
-        if ("Callback Requested".equalsIgnoreCase(contact.getWrapUpCode())) {
+        if ("Callback".equalsIgnoreCase(contact.getLastResult())) {
             callAttempt.put("callback_requested", true);
 
             Map<String, Object> callbackDetails = new HashMap<>();
