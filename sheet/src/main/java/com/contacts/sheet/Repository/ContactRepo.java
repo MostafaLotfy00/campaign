@@ -15,7 +15,9 @@ public interface ContactRepo extends JpaRepository<Contact, Integer> {
     // ده method Spring Data JPA هيعرف ينفذه تلقائي: بيشوف لو فيه contact بالـ phone و lastAttempt ده
     // هذه الميثود ستظل كما هي وتدعم البحث بقيمة null لـ lastAttempt
     Optional<Contact> findByPhoneAndLastAttempt(String phone, LocalDateTime lastAttempt);
+    Optional<Contact> findByPhoneAndConversationId(String phone, String conversationId);
 
+    Optional<Contact> findTopByPhoneOrderByIdDesc(String phone);
     List<Contact> findByCreatedAtBetween(LocalDateTime startOfDay, LocalDateTime endOfDay);
 
     @Query("SELECT c FROM Contact c " +
@@ -25,5 +27,5 @@ public interface ContactRepo extends JpaRepository<Contact, Integer> {
 
     //     @Query("SELECT c FROM Contact c WHERE FUNCTION('CONVERT', DATE, c.createdAt) = :date")
 //     List<Contact> findByCreatedAtDate(@Param("date") LocalDate date);
-Optional<Contact> findByConversationId(String conversationId);
+    Optional<Contact> findByConversationId(String conversationId);
 }

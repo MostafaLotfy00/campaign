@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
-
+import java.util.Objects;
 import java.io.IOException;
 import java.io.StringReader;
 import java.time.LocalDateTime;
@@ -187,8 +187,7 @@ public class GenesysService {
     catch (Exception e) {
         logger.error("🚫 Failed to initiate contact export after retries: " + e.getMessage());
         throw new RuntimeException("Contact export failed after retries.", e);}}
-    // step 3  Waiting 10 seconds to allow export file to be ready
-    // step 4  download exported CSV content
+    // step 3  download exported CSV content
     private String readExportData(String downloadUri, String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -229,7 +228,7 @@ public class GenesysService {
             throw new RuntimeException("Failed to fetch data.", e);
         }
     }
-    //Method used in step 4 to extract uri
+    //Method used in step 3 to extract uri
     private String extractDirectCsvLink(String htmlContent) {
         Pattern pattern = Pattern.compile("href=\"(https?://[^\"]+\\.csv)\"|url='(https?://[^']+\\.csv)'", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(htmlContent);
@@ -246,7 +245,7 @@ public class GenesysService {
                 "Will attempt to download from the original URI, but it may still be HTML. " +
                 "Content sample: {}", htmlContent.substring(0, Math.min(htmlContent.length(), 500)));
         return null;}
-    // step 5 CSV sync
+    // step 4 CSV sync
     private void processAndSaveCsv(String csvContent) {
         int recordsProcessed = 0;
         int recordsUpdated = 0;
@@ -265,45 +264,66 @@ public class GenesysService {
             try (CSVParser csvParser = new CSVParser(new StringReader(csvContent), csvFormat)) {
                 for (CSVRecord csvRecord : csvParser) {
                     recordsProcessed++;
-                    // Log raw CSV row data
+
                     String phone = csvRecord.get("phone1");
                     String lastAttemptStr = csvRecord.get("CallRecordLastAttempt-phone1");
                     String lastResult = csvRecord.get("CallRecordLastResult-phone1");
                     String conversationId = csvRecord.get("conversationId");
                     String orderId = csvRecord.get("orderId");
-                    String contactCallable=csvRecord.get("contactCallable");
+                    String contactCallable = csvRecord.get("contactCallable");
+
                     if (phone == null || phone.trim().isEmpty()) {
                         logger.warn("[CSV ROW SKIPPED] Missing phone number at row {}: {}", recordsProcessed, csvRecord.toMap());
-                        continue;}
-                    if ("OUTBOUND-CONTACT-INVALID-SKILL-SKIPPED".equalsIgnoreCase(lastResult) || "ININ-WRAP-UP-TIMEOUT".equalsIgnoreCase(lastResult)) {
+                        continue;
+                    }
+
+                    if ("OUTBOUND-CONTACT-INVALID-SKILL-SKIPPED".equalsIgnoreCase(lastResult)
+                            || "ININ-WRAP-UP-TIMEOUT".equalsIgnoreCase(lastResult)) {
                         contactCallable = "0";
                     }
+
                     LocalDateTime parsedLastAttempt = null;
                     if (lastAttemptStr != null && !lastAttemptStr.trim().isEmpty()) {
                         try {
                             parsedLastAttempt = LocalDateTime.parse(lastAttemptStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
                         } catch (DateTimeParseException e) {
                             logger.warn("[CSV PARSE] Invalid date format at row {} for phone {}: '{}'. Setting as null.",
-                                    recordsProcessed, phone, lastAttemptStr);}}
+                                    recordsProcessed, phone, lastAttemptStr);
+                        }
+                    }
+
                     logger.info("[CSV DATA] phone={}, lastAttempt={}, lastResult={}, conversationId={}, orderId={}",
                             phone, parsedLastAttempt, lastResult, conversationId, orderId);
 
-                    Optional<Contact> existingContactOptional = contactRepository.findByPhoneAndLastAttempt(phone, parsedLastAttempt);
+                    Optional<Contact> existingContactOptional = contactRepository.findTopByPhoneOrderByIdDesc(phone);
                     if (existingContactOptional.isPresent()) {
+                        Contact existing = existingContactOptional.get();
 
-                        logger.info("[CSV SKIP] Contact already exists: Phone={}, OrderId={}. No need to insert.", phone, orderId);
+                        boolean sameLastAttempt = Objects.equals(existing.getLastAttempt(), parsedLastAttempt);
 
+                        boolean conversationUpdated = (
+                                (existing.getConversationId() == null || existing.getConversationId().isBlank())
+                                        && conversationId != null && !conversationId.isBlank()
+                        );
 
-
+                        if (!sameLastAttempt || conversationUpdated) {
+                            Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId, contactCallable);
+                            contactRepository.save(newContact);
+                            recordsInserted++;
+                            logger.info("[CSV INSERT] Inserted new contact (changed lastAttempt or conversationId): Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
+                                    newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(), newContact.getConversationId(), newContact.getOrderId());
+                        } else {
+                            logger.info("[CSV SKIP] Contact already exists with same lastAttempt and conversationId. Phone={}, OrderId={}", phone, orderId);
+                        }
                     } else {
-
-
-                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId,contactCallable);
+                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId, contactCallable);
                         contactRepository.save(newContact);
                         recordsInserted++;
-                        logger.info("[CSV INSERT] Inserted new contact: Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
+                        logger.info("[CSV INSERT] Inserted new contact (no previous): Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
                                 newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(), newContact.getConversationId(), newContact.getOrderId());
-                    }}}
+                    }
+                }
+            }
 
             logger.info("[CSV SYNC COMPLETED] Processed: {}, Inserted: {}", recordsProcessed, recordsInserted);
         } catch (IOException e) {
@@ -311,7 +331,7 @@ public class GenesysService {
             throw new RuntimeException("CSV read failed", e);
         } catch (Exception e) {
             logger.error("[CSV ERROR] Unexpected error during CSV processing: {}", e.getMessage(), e);
-            throw e; // rethrow to catch outside
+            throw e;
         }
     }
 

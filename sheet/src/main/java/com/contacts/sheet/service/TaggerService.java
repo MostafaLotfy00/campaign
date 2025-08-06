@@ -47,7 +47,7 @@ public class TaggerService {
                 .filter(contact -> contact.getLastAttempt() != null)
                 .filter(contact -> {
                     if (contact.getConversationEndTime() == null) {
-                        if ("callback".equalsIgnoreCase(contact.getLastResult())) {
+                        if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
                             return true;
                         } else {
                             // check conversationId
@@ -116,7 +116,7 @@ public class TaggerService {
                 : 0);
         callAttempt.put("agent_id", contact.getSelectedAgentId() != null ? contact.getAgentName() : "unknown");
 
-        if ("Callback".equalsIgnoreCase(contact.getLastResult())) {
+        if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
             callAttempt.put("callback_requested", true);
 
             Map<String, Object> callbackDetails = new HashMap<>();
