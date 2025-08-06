@@ -344,6 +344,7 @@ public class GenesysService {
            logger.error("Failed to obtain Access Token for Conversation Details API.");
             return null;
         }
+
         String detailsUrl = String.format("https://api.%s/api/v2/analytics/conversations/%s/details", region, conversationId);
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
