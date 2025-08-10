@@ -1,5 +1,8 @@
 package com.contacts.sheet.model;
 
+import lombok.Data;
+
+@Data
 public class Metric {
     private String name;
     private Long value;

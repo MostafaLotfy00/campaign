@@ -1,12 +1,21 @@
 package com.contacts.sheet.service;
 
 import com.contacts.sheet.Repository.ContactRepo;
+import com.contacts.sheet.configration.RetryUtils;
 import com.contacts.sheet.entity.Contact;
 import com.contacts.sheet.model.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mypurecloud.sdk.v2.ApiClient;
+import com.mypurecloud.sdk.v2.ApiException;
+import com.mypurecloud.sdk.v2.ApiResponse;
+import com.mypurecloud.sdk.v2.Configuration;
+import com.mypurecloud.sdk.v2.api.OutboundApi;
+import com.mypurecloud.sdk.v2.model.DomainEntityRef;
+import com.mypurecloud.sdk.v2.model.ExportUri;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -14,22 +23,19 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-
-import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.List;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
-import java.util.Objects;
+
 import java.io.IOException;
 import java.io.StringReader;
 import java.time.LocalDateTime;
-import java.util.Optional;
 
 import static com.contacts.sheet.configration.RetryUtils.retry;
 
@@ -50,6 +56,7 @@ public class GenesysService {
     @Value("${genesys.contact-list-id}")
     private String contactListId;
 
+Contact contact=new Contact();
     private static final int MAX_RETRIES = 3;
     private final RestTemplate restTemplate; // عشان نعمل HTTP requests
     private final ContactRepo contactRepository; // عشان نتعامل مع الداتابيز
@@ -163,31 +170,55 @@ public class GenesysService {
     }
     // step 2 Genesys Cloud sync data using token
     private String initiateContactExport(String token) {
-    String exportUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/export", region, "6e3088a5-3218-4a9d-8fc0-a9f20348f110");
-    HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(token);
-    headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
-    HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-    try {
-        return retry(3, 2000, () -> {
-            try {   ResponseEntity<String> response = restTemplate.exchange(exportUrl, HttpMethod.GET, requestEntity, String.class);
-                String exportResponse = response.getBody();
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode root = mapper.readTree(exportResponse);
-                JsonNode downloadUriNode = root.path("uri");
-                if (downloadUriNode.isMissingNode() || downloadUriNode.isNull()) {
-                    throw new RuntimeException("⚠️ Download URI not found in response: " + exportResponse);}
-                return downloadUriNode.asText();
-            } catch (HttpClientErrorException e) {
-                logger.error("🚫 HTTP error during contact export: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
-                throw new RuntimeException("Export HTTP failure: " + e.getResponseBodyAsString(), e);}
-            catch (Exception e) {
-                logger.error("❌ Export failed after retries: {}", e.getMessage());
-                throw new RuntimeException("Export step permanently failed", e);}});}
-    catch (Exception e) {
-        logger.error("🚫 Failed to initiate contact export after retries: " + e.getMessage());
-        throw new RuntimeException("Contact export failed after retries.", e);}}
-    // step 3  download exported CSV content
+        String contactListId = "6e3088a5-3218-4a9d-8fc0-a9f20348f110";
+        String region = "mec1";
+
+        try {
+            ApiClient apiClient = ApiClient.Builder.standard()
+                    .withAccessToken(token)
+                    .withBasePath("https://api." + region + ".pure.cloud")
+                    .build();
+            Configuration.setDefaultApiClient(apiClient);
+
+            OutboundApi outboundApi = new OutboundApi();
+
+            // Step 1: Trigger a new export with retries
+            DomainEntityRef postResponse = RetryUtils.retry(3, 60000, () -> {
+                logger.info("📤 Triggering new export for contact list {}", contactListId);
+                // The request body must be a new object, not null
+                return outboundApi.postOutboundContactlistExport(contactListId, null);
+            });
+
+            String exportJobId = postResponse.getId();
+            logger.info("✅ Export job initiated. Job ID: {}", exportJobId);
+
+            // Step 2: Poll until ready with retries
+            String downloadUri = RetryUtils.retry(60, 5000, () -> {
+                logger.info("⏳ Polling export status for Job ID {}...", exportJobId);
+
+                // This is the correct method to poll a specific job ID
+                ExportUri exportUri = outboundApi.getOutboundContactlistExport(contactListId, exportJobId);
+
+                if (exportUri != null && exportUri.getUri() != null && !exportUri.getUri().isEmpty()) {
+                    logger.info("✅ Export ready: {}", exportUri.getUri());
+                    return exportUri.getUri();
+                } else {
+                    // Throw an exception to trigger a retry if not ready
+                    throw new RuntimeException("Export not ready yet.");
+                }
+            });
+
+            if (downloadUri == null) {
+                throw new RuntimeException("❌ Export did not complete in time");
+            }
+
+            return downloadUri;
+
+        } catch (Exception e) {
+            logger.error("🚫 Unexpected export error: {}", e.getMessage(), e);
+            throw new RuntimeException("Contact export ultimately failed", e);
+        }
+    }    // step 3  download exported CSV content
     private String readExportData(String downloadUri, String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -337,128 +368,24 @@ public class GenesysService {
 
 //******************************* End of First iteration ********************************************************//
 
-
-    public ConversationDetailsResponse fetchConversationDetails(String conversationId) {
-        String accessToken = getAccessToken(); // ممكن تمرر الـ token لو مش عاوز تجيب واحد جديد كل مرة
-        if (accessToken == null) {
-           logger.error("Failed to obtain Access Token for Conversation Details API.");
-            return null;
-        }
-
-        String detailsUrl = String.format("https://api.%s/api/v2/analytics/conversations/%s/details", region, conversationId);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(accessToken);
-        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
-
-        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-        try {
-            return retry(3, 2000, () -> {
-                logger.info("🔍 Fetching call details for Conversation ID: " + conversationId);
-
-                ResponseEntity<ConversationDetailsResponse> response = restTemplate.exchange(
-                        detailsUrl,
-                        HttpMethod.GET,
-                        requestEntity,
-                        ConversationDetailsResponse.class
-                );
-
-
-                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    logger.info("✅ Successfully fetched call details for ID: " + conversationId);
-                    System.out.println("Response is"+ response.getBody());
-                    return response.getBody();
-                } else {
-                    throw new RuntimeException("❌ Failed to fetch call details. Status: " + response.getStatusCode());
-                }
-            });
-        } catch (Exception e) {
-            logger.error("🚫 Failed permanently to fetch call details for ID: " + conversationId + ": " + e.getMessage());
-            return null;
-        }
-    }
-
-
-
-
-
-
-
-
-
-
-
-    // <<<<<<<<<<<<<<< ميثود جديدة: جلب اسم الـ Agent من SCIM API >>>>>>>>>>>>>>>
-
-    public String fetchAgentDisplayName(String userId) {
-        if (userId == null || userId.isEmpty()) {
-            return null; // No userId, skip API call
-        }
-
-        String accessToken = getAccessToken(); // Reuse token if still valid
-        if (accessToken == null) {
-            logger.error("Failed to obtain Access Token for SCIM Users API.");
-            return null;
-        }
-
-        String scimUserUrl = String.format("https://api.%s/api/v2/scim/users/%s", region, userId);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(accessToken);
-        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
-
-        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-        try {
-            return retry(3, 2000, () -> {
-                logger.info("🔍 Fetching Agent data for User ID: {}", userId);
-
-                ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
-                        scimUserUrl,
-                        HttpMethod.GET,
-                        requestEntity,
-                        ScimUserResponse.class
-                );
-
-                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    logger.info("✅ Successfully fetched Agent data for User ID: {}", userId);
-                    return response.getBody().getDisplayName();
-                } else {
-                    throw new RuntimeException("❌ Failed to fetch Agent data. Status: " + response.getStatusCode());
-                }
-            });
-        } catch (Exception e) {
-            logger.error("🚫 Failed permanently to fetch Agent data for User ID: {}: {}", userId, e.getMessage(), e);
-            return null;
-        }
-    }
-
-
-    // <<<<<<<<<<<<<<< نهاية الميثود الجديدة >>>>>>>>>>>>>>>
-
-
+    //Second iteration for Genesys Cloud
     public void updateContactsWithConversationDetails() {
         logger.info("************ Start Second Iteration of Genesys Cloud **************");
         logger.info("=== [SYNC START] Updating contacts with call details from Genesys Cloud ===");
-
         List<Contact> contactsToUpdate = null;
-
         // STEP 1: Fetch contacts that need call detail updates
         logger.info("[STEP 1] Fetching contacts with valid conversationId and missing conversationStartTime... Please wait...");
         try {
             contactsToUpdate = contactRepository.findWithValidConversationIdAndMissingStartTime();
-            logger.info("📊 Found {} contact records that require call details update.", contactsToUpdate.size());
+            logger.info("[SUCCESS ✅] Found {} contact records that require call details update.", contactsToUpdate.size());
         } catch (Exception e) {
             logger.error("❌ Failed to fetch contacts from repository. Error: {}", e.getMessage(), e);
-            return;
-        }
-
+            return;}
         int updatedCount = 0;
         int failedCount = 0;
-
         for (Contact contact : contactsToUpdate) {
             String phone = contact.getPhone();
             String conversationId = contact.getConversationId();
-
             // STEP 2: Validate conversationId
             logger.info("[STEP 2] Validating conversation ID for phone: {}... Please wait...", phone);
             try {
@@ -469,8 +396,7 @@ public class GenesysService {
             } catch (Exception e) {
                 logger.error("❌ Error during Conversation ID validation | Phone: {} | Error: {}", phone, e.getMessage(), e);
                 failedCount++;
-                continue;
-            }
+                continue;}
 
             ConversationDetailsResponse details = null;
 
@@ -494,7 +420,6 @@ public class GenesysService {
             try {
                 contact.setConversationStartTime(details.getConversationStart());
                 contact.setConversationEndTime(details.getConversationEnd());
-                System.out.println(details.getConversationEnd());
             } catch (Exception e) {
                 logger.error("❌ Error setting call times | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
@@ -507,7 +432,9 @@ public class GenesysService {
             logger.info("[STEP 5] Extracting agent ID, wrap-up code, and call duration from conversation details... Please wait...");
             String selectedAgentId = null;
             String wrapUpCode = null;
-            Long callDurationSeconds = null;
+            Long tTalk = 0L;
+            Long acw = 0L;
+            Long hold = 0L;
 
             try {
                 for (Participant participant : details.getParticipants()) {
@@ -531,29 +458,38 @@ public class GenesysService {
                             // البحث عن الـ duration (tTalk)
                             if (session.getMetrics() != null) {
                                 for (Metric metric : session.getMetrics()) {
-                                    // هنا بنشيك على الـ metric اللي اسمه "tTalk"
+                                    // استخراج Talk Time
                                     if ("tTalk".equalsIgnoreCase(metric.getName())) {
-                                        // بناخد القيمة بالمللي ثانية ونحولها لثواني
-                                        callDurationSeconds = metric.getValue() / 1000;
-                                        break;
+                                        tTalk = metric.getValue() / 1000;
+                                    }
+                                    // استخراج After Call Work
+                                    if ("tAcw".equalsIgnoreCase(metric.getName())) {
+                                        acw = metric.getValue() / 1000;
+                                    }
+                                    // استخراج Hold Time
+                                    if ("tHeld".equalsIgnoreCase(metric.getName())) {
+                                        hold = metric.getValue() / 1000;
                                     }
                                 }
                             }
 
                             // لو لقينا كل البيانات، نخرج من الـ loop عشان نوفر وقت
-                            if (wrapUpCode != null && callDurationSeconds != null) break;
+                            if (wrapUpCode != null && tTalk != null && acw!=null && hold!=null) break;
                         }
                     }
 
                     // لو لقينا كل البيانات، نخرج من الـ loop
-                    if (selectedAgentId != null && wrapUpCode != null && callDurationSeconds != null) break;
+                    if (selectedAgentId != null && wrapUpCode != null && tTalk != null && acw !=null && hold != null) break;
                 }
 
                 contact.setSelectedAgentId(selectedAgentId);
                 contact.setWrapUpCode(wrapUpCode);
                 // تعيين القيمة الجديدة للـ duration
-                contact.setCallDurationSeconds(callDurationSeconds);
-
+                contact.setAfterCallWorkSeconds(acw);
+                contact.setHoldTimeSeconds(hold);
+                contact.setTalkTimeSeconds(tTalk);
+                Long x = acw+hold+tTalk;
+                contact.setCallDurationSeconds(x);
             } catch (Exception e) {
                 logger.error("❌ Error extracting agent, wrap-up code, or duration | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
@@ -634,6 +570,96 @@ public class GenesysService {
         }
     }
 
+    public ConversationDetailsResponse fetchConversationDetails(String conversationId) {
+        String accessToken = getAccessToken();
+        if (accessToken == null) {
+            logger.error("Failed to obtain Access Token for Conversation Details API.");
+            return null;
+        }
+
+        String detailsUrl = String.format("https://api.%s/api/v2/analytics/conversations/%s/details", region, conversationId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+        try {
+            ConversationDetailsResponse detailsResponse = retry(3, 2000, () -> {
+                logger.info("🔍 Fetching call details for Conversation ID: " + conversationId);
+                ResponseEntity<ConversationDetailsResponse> response = restTemplate.exchange(
+                        detailsUrl,
+                        HttpMethod.GET,
+                        requestEntity,
+                        ConversationDetailsResponse.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    logger.info("✅ Successfully fetched call details for ID: " + conversationId);
+                    return response.getBody();
+                } else {
+                    throw new RuntimeException("❌ Failed to fetch call details. Status: " + response.getStatusCode());
+                }
+            });
+
+            // ⭐ الشرط الجديد هنا
+            if (detailsResponse != null && detailsResponse.getConversationEnd() != null) {
+                // قم باستدعاء دالة تحديث جهة الاتصال
+                // يجب عليك استبدال contactListId و contactId بالقيم الصحيحة من جهة الاتصال الخاصة بك
+                // إذا كانت هذه القيم غير متوفرة هنا، ستحتاج إلى جلبها من مكان آخر
+                String contactListId = "6e3088a5-3218-4a9d-8fc0-a9f20348f110";
+
+
+                String contactId ="1";
+                System.out.printf(contactListId + " " + contactId);
+
+                updateContactCallable(contactListId, contactId, false);
+            }
+
+            return detailsResponse;
+
+        } catch (Exception e) {
+            logger.error("🚫 Failed permanently to fetch call details for ID: " + conversationId + ": " + e.getMessage());
+            return null;
+        }
+    }    // <<<<<<<<<<<<<<< ميثود جديدة: جلب اسم الـ Agent من SCIM API >>>>>>>>>>>>>>>
+
+    private void updateContactCallable(String contactListId, String contactId, boolean isCallable) {
+        String accessToken = getAccessToken();
+        if (accessToken == null) {
+            logger.error("Failed to obtain Access Token for Update Contact API.");
+            return;
+        }
+
+        String updateUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/contacts/%s", region, contactListId, contactId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+
+        // بناء جسم الطلب
+        Map<String, Object> requestBody = new HashMap<>();
+        Map<String, Object> data = new HashMap<>();
+        data.put("contactable", isCallable);
+        requestBody.put("data", data);
+        HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(requestBody, headers);
+
+        try {
+            ResponseEntity<Void> response = restTemplate.exchange(
+                    updateUrl,
+                    HttpMethod.PUT, // استخدام PATCH لتحديث جزئي
+                    requestEntity,
+                    Void.class
+            );
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                logger.info("✅ Successfully updated contactable to {} for Contact ID: {}", isCallable, contactId);
+            } else {
+                logger.error("❌ Failed to update contactable for Contact ID: {}. Status: {}", contactId, response.getStatusCode());
+            }
+        } catch (Exception e) {
+            logger.error("🚫 Failed to update contactable for Contact ID: {}. Message: {}", contactId, e.getMessage());
+        }
+    }
 
 
 
@@ -648,6 +674,49 @@ public class GenesysService {
 
 
 
+
+
+    public String fetchAgentDisplayName(String userId) {
+        if (userId == null || userId.isEmpty()) {
+            return null; // No userId, skip API call
+        }
+
+        String accessToken = getAccessToken(); // Reuse token if still valid
+        if (accessToken == null) {
+            logger.error("Failed to obtain Access Token for SCIM Users API.");
+            return null;
+        }
+
+        String scimUserUrl = String.format("https://api.%s/api/v2/scim/users/%s", region, userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+        try {
+            return retry(3, 2000, () -> {
+                logger.info("🔍 Fetching Agent data for User ID: {}", userId);
+
+                ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
+                        scimUserUrl,
+                        HttpMethod.GET,
+                        requestEntity,
+                        ScimUserResponse.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    logger.info("✅ Successfully fetched Agent data for User ID: {}", userId);
+                    return response.getBody().getDisplayName();
+                } else {
+                    throw new RuntimeException("❌ Failed to fetch Agent data. Status: " + response.getStatusCode());
+                }
+            });
+        } catch (Exception e) {
+            logger.error("🚫 Failed permanently to fetch Agent data for User ID: {}: {}", userId, e.getMessage(), e);
+            return null;
+        }
+    }
 
     public List<Contact> getContacts() {
         return contactRepository.findAll(); // أو فلترة حسب شرط معين

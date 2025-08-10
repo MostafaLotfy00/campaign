@@ -10,8 +10,7 @@ import java.time.format.DateTimeParseException;
 
 @Entity
 @Table(name = "contact_lists", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"phone", "last_attempt"})
-})
+        @UniqueConstraint(columnNames = {"phone", "last_attempt"})})
 @NoArgsConstructor
 @AllArgsConstructor
 @Data
@@ -20,62 +19,56 @@ public class Contact {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
     @Getter @Setter // Add individual Getters and Setters
     @Column(name = "phone")
     private String phone;
-
     @Getter @Setter
     @Column(name = "last_attempt")
     private LocalDateTime lastAttempt;
-
     @Getter // Keep getter for lastResult
     @Column(name = "last_result")
     private String lastResult;
-
     @Getter
     @Column(name = "conversation_id")
     private String conversationId;
-
     @Getter @Setter
     @Column(name = "conversation_start_time")
     private LocalDateTime conversationStartTime;
-
     @Getter @Setter
     @Column(name = "conversation_end_time")
     private LocalDateTime conversationEndTime;
-
     @Getter @Setter
     @Column(name = "call_duration_seconds")
     private Long callDurationSeconds;
-
     @Column(name = "order_id")
     private String orderId;
-
     @Column(name = "status", nullable = false)
     private String status;
-
     @Getter
     @Column(name = "selected_agent_id")
     private String selectedAgentId;
-
     @Getter
     @Column(name = "agent_name")
     private String agentName;
-
     @Getter @Setter
     @Column(name = "wrap_up_code")
     private String wrapUpCode;
-
     @Getter
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
     @Column(name = "contact_callable")
     private String contactCallable;
-
     @Column(name = "callback_scheduled_time")
     private LocalDateTime callbackScheduledTime;
+    @Getter @Setter
+    @Column(name = "talk_time_seconds")
+    private Long talkTimeSeconds;
+    @Getter @Setter
+    @Column(name = "hold_time_seconds")
+    private Long holdTimeSeconds;
+    @Getter @Setter
+    @Column(name = "after_call_work_seconds")
+    private Long afterCallWorkSeconds;
 
     // --- Custom Setters for lastResult, conversationId, selectedAgentId, agentName ---
 

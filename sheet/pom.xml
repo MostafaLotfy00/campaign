@@ -38,7 +38,12 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
-
+		<!-- https://mvnrepository.com/artifact/com.mypurecloud/platform-client-v2 -->
+		<dependency>
+			<groupId>com.mypurecloud</groupId>
+			<artifactId>platform-client-v2</artifactId>
+			<version>229.0.0</version>
+		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>

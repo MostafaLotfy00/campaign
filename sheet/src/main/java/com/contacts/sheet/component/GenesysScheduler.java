@@ -22,7 +22,7 @@ public class GenesysScheduler {
         this.genesysService = genesysService;
         this.taggerService = taggerService;}
 //run Genesyspiplineflow
-    @Scheduled(fixedRate = 120000)
+    @Scheduled(fixedRate = 60000)
     public void runFullGenesysPipelineJob() {
         logger.info("🚀 Scheduler:  Starting full Genesys sync and processing pipeline...");
         genesysService.syncContactsFromGenesysApi();
@@ -33,10 +33,10 @@ public class GenesysScheduler {
 
         // Step 3: Send contacts to Tagger
         try {
-            logger.info("📤 Step 3: Sending contacts to Tagger...");
+            logger.info("📤 iteration 3: Sending contacts to Tagger...");
             List<Contact> contacts = genesysService.getContacts();
             taggerService.sendContactsToTagger(contacts);
-            logger.info("✅ Step 3: Contacts successfully sent to Tagger.");
+            logger.info("✅ iteration 3: Has been finished.");
         } catch (Exception e) {
             logger.error("❌ Step 3 failed: {}", e.getMessage());
         }

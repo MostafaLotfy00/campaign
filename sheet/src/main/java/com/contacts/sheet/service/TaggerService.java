@@ -110,7 +110,7 @@ public class TaggerService {
         callAttempt.put("order_id", String.valueOf(contact.getOrderId()));
         if (contact.getLastAttempt() != null) {
             callAttempt.put("call_datetime", contact.getLastAttempt().atOffset(ZoneOffset.UTC).toString());}
-        callAttempt.put("wrap_up_reason", contact.getWrapUpCode() != null ? contact.getWrapUpCode() : "No Answer");
+        callAttempt.put("wrap_up_reason", contact.getLastResult() != null ? contact.getLastResult() : "Empty");
         callAttempt.put("call_duration", (contact.getCallDurationSeconds() != null && contact.getCallDurationSeconds() > 0)
                 ? contact.getCallDurationSeconds()
                 : 0);
