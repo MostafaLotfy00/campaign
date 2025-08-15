@@ -9,8 +9,19 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
 @Entity
-@Table(name = "contact_lists", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"phone", "last_attempt"})})
+@Table(
+        name = "contact_lists",
+        uniqueConstraints = {
+                @UniqueConstraint(columnNames = {
+                        "phone",
+                        "last_attempt",
+                        "last_result",
+                        "conversation_id",
+                        "order_id",
+                        "contact_callable"
+                })
+        }
+)
 @NoArgsConstructor
 @AllArgsConstructor
 @Data
@@ -50,6 +61,9 @@ public class Contact {
     @Getter
     @Column(name = "agent_name")
     private String agentName;
+    @Getter
+    @Column(name = "agent_email")
+    private String agentEmail;
     @Getter @Setter
     @Column(name = "wrap_up_code")
     private String wrapUpCode;
@@ -96,6 +110,11 @@ public class Contact {
         applyNullificationLogic();
     }
 
+    public void setAgentEmail(String agentEmail) {
+        this.agentEmail = agentEmail;
+        applyNullificationLogic();
+    }
+
     // Helper method to encapsulate the nullification logic
     private void applyNullificationLogic() {
         if (this.conversationId==null  || this.conversationId.isEmpty() ) {
@@ -104,6 +123,7 @@ public class Contact {
            this.callDurationSeconds=null;
             this.selectedAgentId = null;
             this.agentName = null;
+            this.agentEmail = null;
         }
     }
 
@@ -145,7 +165,7 @@ this.contactCallable = contactCallable;
 
     public Contact(String phone, LocalDateTime lastAttempt, String lastResult, String conversationId,
                    LocalDateTime conversationStartTime, LocalDateTime conversationEndTime,
-                   String selectedAgentId, String agentName, String wrapUpCode, Long callDurationSeconds, String orderId) {
+                   String selectedAgentId, String agentName, String agentEmail,String wrapUpCode, Long callDurationSeconds, String orderId) {
         this.phone = phone;
         this.lastAttempt = lastAttempt;
         setLastResult(lastResult); // Use the custom setter
@@ -153,7 +173,8 @@ this.contactCallable = contactCallable;
         this.conversationStartTime = conversationStartTime;
         this.conversationEndTime = conversationEndTime;
         setSelectedAgentId(selectedAgentId); // Use the custom setter
-        setAgentName(agentName); // Use the custom setter
+        setAgentName(agentName);
+        setAgentEmail(agentEmail);// Use the custom setter
         this.wrapUpCode = wrapUpCode;
         this.orderId = orderId;
         this.status = "not sent";

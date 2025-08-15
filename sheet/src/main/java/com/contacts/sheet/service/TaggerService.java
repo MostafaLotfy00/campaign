@@ -14,6 +14,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -46,6 +47,10 @@ public class TaggerService {
                 .filter(contact -> "not sent".equalsIgnoreCase(contact.getStatus()))
                 .filter(contact -> contact.getLastAttempt() != null)
                 .filter(contact -> {
+                    boolean hasConversationId = contact.getConversationId() != null && !contact.getConversationId().isEmpty();
+                    return !hasConversationId || contact.getCallDurationSeconds() != null;
+                })
+                .filter(contact -> {
                     if (contact.getConversationEndTime() == null) {
                         if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
                             return true;
@@ -58,6 +63,8 @@ public class TaggerService {
                     }
                 })
                 .collect(Collectors.toList());
+
+
 
 
         if (unsentContacts.isEmpty()) {
@@ -107,23 +114,28 @@ public class TaggerService {
     private Map<String, Object> convertContactToCallAttempt(Contact contact) {
         Map<String, Object> callAttempt = new HashMap<>();
 
-        callAttempt.put("order_id", String.valueOf(contact.getOrderId()));
+        callAttempt.put("order_id", contact.getOrderId());
         if (contact.getLastAttempt() != null) {
             callAttempt.put("call_datetime", contact.getLastAttempt().atOffset(ZoneOffset.UTC).toString());}
         callAttempt.put("wrap_up_reason", contact.getLastResult() != null ? contact.getLastResult() : "Empty");
         callAttempt.put("call_duration", (contact.getCallDurationSeconds() != null && contact.getCallDurationSeconds() > 0)
                 ? contact.getCallDurationSeconds()
                 : 0);
-        callAttempt.put("agent_id", contact.getSelectedAgentId() != null ? contact.getAgentName() : "unknown");
+        callAttempt.put("agent_id", contact.getAgentEmail() != null ? contact.getAgentEmail() : "unknown");
 
         if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
             callAttempt.put("callback_requested", true);
 
             Map<String, Object> callbackDetails = new HashMap<>();
-            if (contact.getCallbackScheduledTime()!= null) {
-                callbackDetails.put("callback_time", contact.getCallbackScheduledTime().atOffset(ZoneOffset.UTC).toString());
-            }
-            callbackDetails.put("callback_agent_id", contact.getAgentName());
+
+            callbackDetails.put(
+                    "callback_time",
+                    contact.getCallbackScheduledTime() != null
+                            ? contact.getCallbackScheduledTime().atOffset(ZoneOffset.UTC).toString()
+                            : LocalDateTime.of(2030, 1, 1, 0, 0).atOffset(ZoneOffset.UTC).toString()
+            );
+            callbackDetails.put("callback_agent_id", contact.getAgentEmail());
+
 
             callAttempt.put("callback_details", callbackDetails);
         }

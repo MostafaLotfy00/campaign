@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
@@ -279,7 +280,6 @@ Contact contact=new Contact();
     // step 4 CSV sync
     private void processAndSaveCsv(String csvContent) {
         int recordsProcessed = 0;
-        int recordsUpdated = 0;
         int recordsInserted = 0;
 
         try {
@@ -326,32 +326,25 @@ Contact contact=new Contact();
                     logger.info("[CSV DATA] phone={}, lastAttempt={}, lastResult={}, conversationId={}, orderId={}",
                             phone, parsedLastAttempt, lastResult, conversationId, orderId);
 
-                    Optional<Contact> existingContactOptional = contactRepository.findTopByPhoneOrderByIdDesc(phone);
-                    if (existingContactOptional.isPresent()) {
-                        Contact existing = existingContactOptional.get();
+                    // ✅ البحث على أساس جميع الأعمدة في UNIQUE CONSTRAINT
+                    Optional<Contact> existingContactOptional =
+                            contactRepository.findByPhoneAndLastAttemptAndLastResultAndConversationIdAndOrderIdAndContactCallable(
+                                    phone, parsedLastAttempt, lastResult, conversationId, orderId, contactCallable
+                            );
 
-                        boolean sameLastAttempt = Objects.equals(existing.getLastAttempt(), parsedLastAttempt);
-
-                        boolean conversationUpdated = (
-                                (existing.getConversationId() == null || existing.getConversationId().isBlank())
-                                        && conversationId != null && !conversationId.isBlank()
-                        );
-
-                        if (!sameLastAttempt || conversationUpdated) {
-                            Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId, contactCallable);
+                    if (existingContactOptional.isEmpty()) {
+                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId, contactCallable);
+                        try {
                             contactRepository.save(newContact);
                             recordsInserted++;
-                            logger.info("[CSV INSERT] Inserted new contact (changed lastAttempt or conversationId): Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
-                                    newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(), newContact.getConversationId(), newContact.getOrderId());
-                        } else {
-                            logger.info("[CSV SKIP] Contact already exists with same lastAttempt and conversationId. Phone={}, OrderId={}", phone, orderId);
+                            logger.info("[CSV INSERT] Inserted new contact: Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
+                                    newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(),
+                                    newContact.getConversationId(), newContact.getOrderId());
+                        } catch (DataIntegrityViolationException ex) {
+                            logger.warn("[CSV SKIP] Detected duplicate at DB level, skipping insert. Phone={}, OrderId={}", phone, orderId);
                         }
                     } else {
-                        Contact newContact = new Contact(phone, parsedLastAttempt, lastResult, conversationId, orderId, contactCallable);
-                        contactRepository.save(newContact);
-                        recordsInserted++;
-                        logger.info("[CSV INSERT] Inserted new contact (no previous): Phone={}, LastAttempt={}, Result={}, ConversationId={}, OrderId={}",
-                                newContact.getPhone(), newContact.getLastAttempt(), newContact.getLastResult(), newContact.getConversationId(), newContact.getOrderId());
+                        logger.info("[CSV SKIP] Duplicate contact exists, skipping insert. Phone={}, OrderId={}", phone, orderId);
                     }
                 }
             }
@@ -412,8 +405,7 @@ Contact contact=new Contact();
             } catch (Exception e) {
                 logger.error("❌ Exception while fetching call details | Phone: {} | Conversation ID: {} | Error: {}", phone, conversationId, e.getMessage(), e);
                 failedCount++;
-                continue;
-            }
+                continue;}
 
             // STEP 4: Set call times
             logger.info("[STEP 4] Setting conversation start/end time... Please wait...");
@@ -437,16 +429,37 @@ Contact contact=new Contact();
             Long hold = 0L;
 
             try {
+
+
+                // First pass: find agent ID and extract metrics
                 for (Participant participant : details.getParticipants()) {
-                    // البحث عن الـ agent
                     if ("agent".equalsIgnoreCase(participant.getPurpose()) && participant.getUserId() != null) {
                         selectedAgentId = participant.getUserId();
+                        if (participant.getSessions() != null) {
+                            for (Session session : participant.getSessions()) {
+                                if (session.getMetrics() != null) {
+                                    for (Metric metric : session.getMetrics()) {
+                                        if ("tTalk".equalsIgnoreCase(metric.getName())) {
+                                            tTalk = metric.getValue() / 1000;
+                                        }
+                                        if ("tAcw".equalsIgnoreCase(metric.getName())) {
+                                            acw = metric.getValue() / 1000;
+                                        }
+                                        if ("tHeld".equalsIgnoreCase(metric.getName())) {
+                                            hold = metric.getValue() / 1000;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                }
 
+                // Second pass: find wrap-up code (can be on non-agent)
+                for (Participant participant : details.getParticipants()) {
                     if (participant.getSessions() != null) {
                         for (Session session : participant.getSessions()) {
-                            // البحث عن الـ Wrap-Up Code
-                            if (wrapUpCode == null && session.getSegments() != null) {
+                            if (session.getSegments() != null) {
                                 for (Segment segment : session.getSegments()) {
                                     if (segment.getWrapUpCode() != null) {
                                         wrapUpCode = segment.getWrapUpCode();
@@ -454,51 +467,21 @@ Contact contact=new Contact();
                                     }
                                 }
                             }
-
-                            // البحث عن الـ duration (tTalk)
-                            if (session.getMetrics() != null) {
-                                for (Metric metric : session.getMetrics()) {
-                                    // استخراج Talk Time
-                                    if ("tTalk".equalsIgnoreCase(metric.getName())) {
-                                        tTalk = metric.getValue() / 1000;
-                                    }
-                                    // استخراج After Call Work
-                                    if ("tAcw".equalsIgnoreCase(metric.getName())) {
-                                        acw = metric.getValue() / 1000;
-                                    }
-                                    // استخراج Hold Time
-                                    if ("tHeld".equalsIgnoreCase(metric.getName())) {
-                                        hold = metric.getValue() / 1000;
-                                    }
-                                }
-                            }
-
-                            // لو لقينا كل البيانات، نخرج من الـ loop عشان نوفر وقت
-                            if (wrapUpCode != null && tTalk != null && acw!=null && hold!=null) break;
+                            if (wrapUpCode != null) break;
                         }
                     }
-
-                    // لو لقينا كل البيانات، نخرج من الـ loop
-                    if (selectedAgentId != null && wrapUpCode != null && tTalk != null && acw !=null && hold != null) break;
+                    if (wrapUpCode != null) break;
                 }
-
+                // Save results
                 contact.setSelectedAgentId(selectedAgentId);
                 contact.setWrapUpCode(wrapUpCode);
-                // تعيين القيمة الجديدة للـ duration
                 contact.setAfterCallWorkSeconds(acw);
                 contact.setHoldTimeSeconds(hold);
                 contact.setTalkTimeSeconds(tTalk);
-                Long x = acw+hold+tTalk;
-                contact.setCallDurationSeconds(x);
+                contact.setCallDurationSeconds(tTalk +  hold);
             } catch (Exception e) {
                 logger.error("❌ Error extracting agent, wrap-up code, or duration | Phone: {} | Error: {}", phone, e.getMessage(), e);
             }
-
-            // ---
-            // نهاية التعديل
-            // ---
-
-            // STEP 6: Extract Callback Scheduled Time
             logger.info("[STEP 6] Extracting callback scheduled time if last result is 'Call Back'...");
             try {
                 if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
@@ -527,13 +510,17 @@ Contact contact=new Contact();
                 if (selectedAgentId != null && !selectedAgentId.isEmpty()) {
                     try {
                         String agentName = fetchAgentDisplayName(selectedAgentId);
+                        String agentEmail = fetchAgentEmail(selectedAgentId);
+                        contact.setAgentEmail(agentEmail);
                         contact.setAgentName(agentName);
                     } catch (Exception e) {
                         logger.warn("⚠️ Failed to fetch agent name | Agent ID: {} | Phone: {} | Error: {}", selectedAgentId, phone, e.getMessage());
                         contact.setAgentName(null);
+                        contact.setAgentEmail(null);
                     }
                 } else {
                     contact.setAgentName(null);
+                    contact.setAgentEmail(null);
                 }
             } catch (Exception e) {
                 logger.error("❌ Error while setting agent name | Phone: {} | Error: {}", phone, e.getMessage(), e);
@@ -552,6 +539,7 @@ Contact contact=new Contact();
                 logger.info("   • Duration (s): {}", contact.getCallDurationSeconds());
                 logger.info("   • Agent ID: {}", selectedAgentId);
                 logger.info("   • Agent Name: {}", contact.getAgentName());
+                logger.info("   • Agent Email: {}", contact.getAgentEmail());
                 logger.info("   • Wrap-Up Code: {}", wrapUpCode);
                 logger.info("   • Callback Scheduled Time: {}", contact.getCallbackScheduledTime());
             } catch (Exception e) {
@@ -602,18 +590,7 @@ Contact contact=new Contact();
             });
 
             // ⭐ الشرط الجديد هنا
-            if (detailsResponse != null && detailsResponse.getConversationEnd() != null) {
-                // قم باستدعاء دالة تحديث جهة الاتصال
-                // يجب عليك استبدال contactListId و contactId بالقيم الصحيحة من جهة الاتصال الخاصة بك
-                // إذا كانت هذه القيم غير متوفرة هنا، ستحتاج إلى جلبها من مكان آخر
-                String contactListId = "6e3088a5-3218-4a9d-8fc0-a9f20348f110";
 
-
-                String contactId ="1";
-                System.out.printf(contactListId + " " + contactId);
-
-                updateContactCallable(contactListId, contactId, false);
-            }
 
             return detailsResponse;
 
@@ -623,43 +600,6 @@ Contact contact=new Contact();
         }
     }    // <<<<<<<<<<<<<<< ميثود جديدة: جلب اسم الـ Agent من SCIM API >>>>>>>>>>>>>>>
 
-    private void updateContactCallable(String contactListId, String contactId, boolean isCallable) {
-        String accessToken = getAccessToken();
-        if (accessToken == null) {
-            logger.error("Failed to obtain Access Token for Update Contact API.");
-            return;
-        }
-
-        String updateUrl = String.format("https://api.%s/api/v2/outbound/contactlists/%s/contacts/%s", region, contactListId, contactId);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(accessToken);
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
-
-        // بناء جسم الطلب
-        Map<String, Object> requestBody = new HashMap<>();
-        Map<String, Object> data = new HashMap<>();
-        data.put("contactable", isCallable);
-        requestBody.put("data", data);
-        HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(requestBody, headers);
-
-        try {
-            ResponseEntity<Void> response = restTemplate.exchange(
-                    updateUrl,
-                    HttpMethod.PUT, // استخدام PATCH لتحديث جزئي
-                    requestEntity,
-                    Void.class
-            );
-
-            if (response.getStatusCode().is2xxSuccessful()) {
-                logger.info("✅ Successfully updated contactable to {} for Contact ID: {}", isCallable, contactId);
-            } else {
-                logger.error("❌ Failed to update contactable for Contact ID: {}. Status: {}", contactId, response.getStatusCode());
-            }
-        } catch (Exception e) {
-            logger.error("🚫 Failed to update contactable for Contact ID: {}. Message: {}", contactId, e.getMessage());
-        }
-    }
 
 
 
@@ -717,6 +657,48 @@ Contact contact=new Contact();
             return null;
         }
     }
+    public String fetchAgentEmail(String userId) {
+        if (userId == null || userId.isEmpty()) {
+            return null; // No userId, skip API call
+        }
+
+        String accessToken = getAccessToken(); // Reuse token if still valid
+        if (accessToken == null) {
+            logger.error("Failed to obtain Access Token for SCIM Users API.");
+            return null;
+        }
+
+        String scimUserUrl = String.format("https://api.%s/api/v2/scim/users/%s", region, userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+        try {
+            return retry(3, 2000, () -> {
+                logger.info("🔍 Fetching Agent Email for User ID: {}", userId);
+
+                ResponseEntity<ScimUserResponse> response = restTemplate.exchange(
+                        scimUserUrl,
+                        HttpMethod.GET,
+                        requestEntity,
+                        ScimUserResponse.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    logger.info("✅ Successfully fetched Agent Email for User ID: {}", userId);
+                    return response.getBody().getEmails().get(0).getValue();
+                } else {
+                    throw new RuntimeException("❌ Failed to fetch Agent Email. Status: " + response.getStatusCode());
+                }
+            });
+        } catch (Exception e) {
+            logger.error("🚫 Failed permanently to fetch Agent data for User ID: {}: {}", userId, e.getMessage(), e);
+            return null;
+        }
+    }
+
 
     public List<Contact> getContacts() {
         return contactRepository.findAll(); // أو فلترة حسب شرط معين

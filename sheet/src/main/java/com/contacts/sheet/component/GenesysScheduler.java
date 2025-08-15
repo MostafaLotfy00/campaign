@@ -29,8 +29,6 @@ public class GenesysScheduler {
         genesysService.updateContactsWithConversationDetails();
 
 
-
-
         // Step 3: Send contacts to Tagger
         try {
             logger.info("📤 iteration 3: Sending contacts to Tagger...");

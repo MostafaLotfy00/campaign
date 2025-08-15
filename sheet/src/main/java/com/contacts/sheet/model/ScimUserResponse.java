@@ -5,6 +5,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
+import java.util.List;
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 @NoArgsConstructor
@@ -14,5 +16,5 @@ public class ScimUserResponse {
     private String id;
     private String userName;
     private String displayName; // ده الحقل اللي يهمنا
-
+    private List<Email> emails;
 }

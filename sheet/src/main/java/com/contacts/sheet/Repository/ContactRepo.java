@@ -28,4 +28,8 @@ public interface ContactRepo extends JpaRepository<Contact, Integer> {
     //     @Query("SELECT c FROM Contact c WHERE FUNCTION('CONVERT', DATE, c.createdAt) = :date")
 //     List<Contact> findByCreatedAtDate(@Param("date") LocalDate date);
     Optional<Contact> findByConversationId(String conversationId);
+
+    Optional<Contact> findByPhoneAndLastAttemptAndLastResultAndConversationIdAndOrderIdAndContactCallable(
+            String phone, LocalDateTime lastAttempt, String lastResult, String conversationId, String orderId, String contactCallable
+    );
 }
