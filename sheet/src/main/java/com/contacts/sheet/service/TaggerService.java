@@ -52,7 +52,16 @@ public class TaggerService {
                 })
                 .filter(contact -> {
                     if (contact.getConversationEndTime() == null) {
-                        if ("Call Back".equalsIgnoreCase(contact.getLastResult()) || "Answer Machine\\\\Voice Mail".equalsIgnoreCase(contact.getLastResult()) || "Busy".equalsIgnoreCase(contact.getLastResult()) ) {
+                        if ("Call Back".equalsIgnoreCase(contact.getLastResult())
+                                || "Answer Machine\\Voice Mail".equalsIgnoreCase(contact.getLastResult())
+                                || "Busy".equalsIgnoreCase(contact.getLastResult())
+                                || "No Answer".equalsIgnoreCase(contact.getLastResult())
+                                || "Rejected Order".equalsIgnoreCase(contact.getLastResult())
+                                || "Confirmed Order".equalsIgnoreCase(contact.getLastResult())
+                                || "Customer Hung Up".equalsIgnoreCase(contact.getLastResult())
+                                || "Dead Call".equalsIgnoreCase(contact.getLastResult())
+                                || "DNC Do Not Call".equalsIgnoreCase(contact.getLastResult())
+                                || "Postponed Order".equalsIgnoreCase(contact.getLastResult())) {
                             return true;
                         } else {
                             // check conversationId
