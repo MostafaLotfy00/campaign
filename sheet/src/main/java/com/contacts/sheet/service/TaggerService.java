@@ -52,7 +52,7 @@ public class TaggerService {
                 })
                 .filter(contact -> {
                     if (contact.getConversationEndTime() == null) {
-                        if ("Call Back".equalsIgnoreCase(contact.getLastResult())) {
+                        if ("Call Back".equalsIgnoreCase(contact.getLastResult()) || "Answer Machine\\\\Voice Mail".equalsIgnoreCase(contact.getLastResult()) || "Busy".equalsIgnoreCase(contact.getLastResult()) ) {
                             return true;
                         } else {
                             // check conversationId
