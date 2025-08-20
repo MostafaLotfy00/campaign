@@ -63,9 +63,9 @@ public class ReportService {
             for (Contact contact : contacts) {
                 csvPrinter.printRecord(
                         contact.getId(),
-                        contact.getPhone(),
-                        contact.getLastAttempt(), // غالباً هيكون LocalDateTime
-                        contact.getLastResult(),
+                        contact.getPhone1(),
+                        contact.getLastAttempt1(), // غالباً هيكون LocalDateTime
+                        contact.getLastResult1(),
                         contact.getCreatedAt()   // غالباً هيكون LocalDateTime
                 );
             }
